@@ -7,6 +7,7 @@
     formType: 'need',
     editId: null,
     token: localStorage.getItem('hana_wall_token') || '',
+    adminMode: false,
     view: 'home',
     fp: getFingerprint(),
     me: localStorage.getItem('hana_wall_me') || '',
@@ -139,7 +140,7 @@
   }
 
   function adminBar(post) {
-    if (!state.token) return '';
+    if (!state.adminMode) return '';
     return `
       <div class="admin-bar">
         <button class="admin-btn" data-edit="${post.id}">✏ 编辑</button>
@@ -148,9 +149,14 @@
   }
 
   function likeBtn(post) {
-    const names = (post.like_names || []).map(esc).join('、');
+    const names = (post.like_names || []).map((n, i) =>
+      (post.like_admins && post.like_admins[i] ? '👑 ' : '') + esc(n)).join('、');
     const title = names ? '赞过：' + names : '点赞支持一下（防刷会记录设备指纹）';
     return `<button type="button" class="like-btn${post.liked ? ' liked' : ''}" data-like="${post.id}" title="${title}">${post.liked ? '❤️' : '🤍'} <span>${post.like_count || 0}</span></button>`;
+  }
+
+  function adminTag(item) {
+    return item.is_admin ? '<span class="admin-tag" title="管理员">👑</span>' : '';
   }
 
   function commentNodeHtml(c, all, byReplyTo, depth) {
@@ -159,7 +165,7 @@
     const parent = all.find((x) => x.id === c.reply_to);
     return `
       <div class="comment${c.reply_to ? ' comment-reply' : ''}">
-        <b>${esc(c.name)}</b>
+        <b>${esc(c.name)}</b>${adminTag(c)}
         ${parent ? `<span class="comment-ref">回复 ${esc(parent.name)}</span>` : ''}
         <span class="comment-time">${esc(c.created_at)}</span>
         <p>${esc(c.content)}</p>
@@ -278,7 +284,7 @@
     const parent = state.wall.find((x) => x.id === m.reply_to);
     return `
       <div class="wall-item${m.reply_to ? ' wall-reply' : ''}">
-        <b>${esc(m.name)}</b>
+        <b>${esc(m.name)}</b>${adminTag(m)}
         ${parent ? `<span class="comment-ref">回复 ${esc(parent.name)}</span>` : ''}
         <span class="comment-time">${esc(m.created_at)}</span>
         <p>${esc(m.content)}</p>
@@ -336,7 +342,9 @@
     if (!state.token) return;
     try {
       const res = await api('/api/admin/check?token=' + encodeURIComponent(state.token));
-      if (!res.ok) {
+      if (res.ok) {
+        state.adminMode = true;
+      } else {
         state.token = '';
         localStorage.removeItem('hana_wall_token');
       }
@@ -542,10 +550,13 @@
         post.like_count = res.count;
         post.liked = res.liked;
         post.like_names = res.like_names;
+        post.like_admins = res.like_admins;
       }
       btn.classList.toggle('liked', res.liked);
       btn.innerHTML = (res.liked ? '❤️' : '🤍') + ' <span>' + res.count + '</span>';
-      btn.title = res.like_names.length ? '赞过：' + res.like_names.join('、') : '点赞支持一下（防刷会记录设备指纹）';
+      const names = (res.like_names || []).map((n, i) =>
+        (res.like_admins && res.like_admins[i] ? '👑 ' : '') + esc(n)).join('、');
+      btn.title = names ? '赞过：' + names : '点赞支持一下（防刷会记录设备指纹）';
       toast(res.liked ? '已点赞 ❤️' : '已取消点赞');
     } catch (err) {
       toast('点赞失败：' + err.message);
@@ -589,7 +600,7 @@
     const link = $('#btn-admin');
     const logsBtn = $('#btn-logs');
     const badge = $('#admin-badge');
-    const managing = state.token;
+    const managing = state.adminMode;
     if (logsBtn) logsBtn.classList.toggle('hidden', !managing);
     if (badge) badge.classList.toggle('hidden', !managing);
     if (link) link.textContent = managing ? '⚙ 退出管理' : '⚙ 管理';
@@ -600,9 +611,10 @@
     const btn = $('#form-admin button[type="submit"]');
     btn.disabled = true;
     try {
-      const res = await api('/api/admin/login', { password: $('#a-password').value });
+      const res = await api('/api/admin/login', { password: $('#a-password').value, fp: state.fp });
       if (!res.ok) throw new Error(res.error);
       state.token = res.token;
+      state.adminMode = true;
       localStorage.setItem('hana_wall_token', state.token);
       closeModal('modal-admin');
       toast('已进入管理模式 ✨');
@@ -617,9 +629,35 @@
   }
 
   function logoutAdmin() {
-    state.token = '';
-    localStorage.removeItem('hana_wall_token');
-    toast('已退出管理模式');
+    state.adminMode = false;
+    toast('已退出管理模式（管理身份保留，随时可恢复）');
+    render();
+  }
+
+  async function toggleAdminMode() {
+    if (state.adminMode) {
+      logoutAdmin();
+      return;
+    }
+    if (!state.token) {
+      openModal('modal-admin');
+      return;
+    }
+    try {
+      const res = await api('/api/admin/check?token=' + encodeURIComponent(state.token));
+      if (res.ok) {
+        state.adminMode = true;
+        toast('已恢复管理模式 ✨');
+      } else {
+        state.token = '';
+        localStorage.removeItem('hana_wall_token');
+        openModal('modal-admin');
+        toast('管理身份已过期，请重新输入口令');
+      }
+    } catch (e) {
+      state.adminMode = true;
+      toast('已恢复管理模式 ✨');
+    }
     render();
   }
 
@@ -741,8 +779,7 @@
   on('#btn-new-done', 'click', () => { resetNewForm('done'); openModal('modal-new'); });
   on('#btn-admin', 'click', (e) => {
     e.preventDefault();
-    if (state.token) logoutAdmin();
-    else openModal('modal-admin');
+    toggleAdminMode();
   });
   on('#btn-logs', 'click', (e) => {
     e.preventDefault();

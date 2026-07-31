@@ -112,13 +112,16 @@ def get_visitor(token):
     return visitors.get(token) or None
 
 
-def visitor_name_map():
-    """设备指纹 -> 最新昵称 的映射（用于显示时归一化）"""
+def visitor_map():
+    """设备指纹 -> {name, is_admin}（用于显示时归一化 + 管理员标签）"""
     visitors = load_json(VISITORS_FILE, {})
     m = {}
     for info in visitors.values():
         if info.get("fp"):
-            m[info["fp"]] = info.get("name", "")
+            m[info["fp"]] = {
+                "name": info.get("name", ""),
+                "is_admin": bool(info.get("is_admin")),
+            }
     return m
 
 
@@ -288,7 +291,7 @@ class Handler(BaseHTTPRequestHandler):
             with LOCK:
                 posts = load_posts()
                 likes = load_json(LIKES_FILE, {})
-                vmap = visitor_name_map()
+                vmap = visitor_map()
             posts.sort(key=lambda p: p.get("id", 0), reverse=True)
             for p in posts:
                 arr = likes.get(str(p.get("id")), [])
@@ -296,25 +299,31 @@ class Handler(BaseHTTPRequestHandler):
                 p["like_count"] = len(arr)
                 p["liked"] = bool(fp and any(x["fp"] == fp for x in arr))
                 names = []
+                admins = []
                 for x in arr:
                     fp2 = x.get("fp", "")
-                    names.append(vmap.get(fp2) or x.get("name") or "匿名")
+                    info = vmap.get(fp2) or {}
+                    names.append(info.get("name") or x.get("name") or "匿名")
+                    admins.append(bool(info.get("is_admin")))
                 p["like_names"] = names
+                p["like_admins"] = admins
                 for c in p.get("comments", []):
                     fp2 = c.get("fp")
                     if fp2 and fp2 in vmap:
-                        c["name"] = vmap[fp2]
+                        c["name"] = vmap[fp2]["name"]
+                        c["is_admin"] = vmap[fp2]["is_admin"]
             self._send(200, {"ok": True, "posts": posts})
             return
         if path == "/api/wall":
             with LOCK:
                 wall = load_json(WALL_FILE, [])
-                vmap = visitor_name_map()
+                vmap = visitor_map()
             wall.sort(key=lambda m: m.get("id", 0), reverse=True)
             for m in wall:
                 fp2 = m.get("fp")
                 if fp2 and fp2 in vmap:
-                    m["name"] = vmap[fp2]
+                    m["name"] = vmap[fp2]["name"]
+                    m["is_admin"] = vmap[fp2]["is_admin"]
             self._send(200, {"ok": True, "wall": wall})
             return
         if path == "/api/admin/logs":
@@ -367,6 +376,16 @@ class Handler(BaseHTTPRequestHandler):
                     token = secrets.token_hex(16)
                     TOKENS.add(token)
                     save_tokens()
+                    fp = clean_text(data.get("fp", ""), "fp")
+                    if re.fullmatch(r"[0-9a-f]{8,64}", fp):
+                        visitors = load_json(VISITORS_FILE, {})
+                        changed = False
+                        for t, info in visitors.items():
+                            if info.get("fp") == fp:
+                                info["is_admin"] = True
+                                changed = True
+                        if changed:
+                            save_json(VISITORS_FILE, visitors)
                     self._send(200, {"ok": True, "token": token})
                 else:
                     self._send(403, {"ok": False, "error": "口令错误"})
@@ -520,8 +539,16 @@ class Handler(BaseHTTPRequestHandler):
                 else:
                     likes[key] = arr
                 save_json(LIKES_FILE, likes)
+                vmap = visitor_map()
+                names = []
+                admins = []
+                for x in arr:
+                    fp2 = x.get("fp", "")
+                    info = vmap.get(fp2) or {}
+                    names.append(info.get("name") or x.get("name") or "匿名")
+                    admins.append(bool(info.get("is_admin")))
                 self._send(200, {"ok": True, "liked": liked, "count": len(arr),
-                                 "like_names": [x["name"] or "匿名" for x in arr]})
+                                 "like_names": names, "like_admins": admins})
                 return
             if path == "/api/wall":
                 visitor = get_visitor(clean_text(data.get("token", ""), "token"))

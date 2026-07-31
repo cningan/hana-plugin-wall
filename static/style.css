@@ -342,6 +342,12 @@ main { max-width: 1080px; margin: 0 auto; padding: 24px; }
   margin-left: 6px;
 }
 
+.admin-tag {
+  font-size: 12px;
+  margin-left: 5px;
+  cursor: default;
+}
+
 .comment-reply {
   margin-left: 22px;
   padding-left: 12px;
