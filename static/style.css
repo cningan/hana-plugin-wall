@@ -16,6 +16,13 @@
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
+/* 切换视图时滚动条出现/消失会导致页面宽度变化抖动；
+   scrollbar-gutter 现代浏览器生效（不常驻灰条），老内核退回 overflow-y: scroll */
+html {
+  overflow-y: scroll;
+  scrollbar-gutter: stable;
+}
+
 body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', Roboto, sans-serif;
   background: var(--bg);
