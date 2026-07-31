@@ -402,6 +402,11 @@ class Handler(BaseHTTPRequestHandler):
                 visitors = load_json(VISITORS_FILE, {})
                 for t in [t for t, info in visitors.items() if info.get("fp") == fp]:
                     del visitors[t]
+                name_key = name.casefold()
+                for info in visitors.values():
+                    if info.get("fp") != fp and str(info.get("name", "")).casefold() == name_key:
+                        self._send(409, {"ok": False, "error": "昵称已被占用，换一个吧"})
+                        return
                 token = secrets.token_hex(16)
                 visitors[token] = {"fp": fp, "name": name, "created_at": now_str()}
                 if len(visitors) > MAX_VISITORS:
