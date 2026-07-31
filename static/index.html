@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Hana 插件需求墙</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E🌸%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<header>
+  <div class="header-inner">
+    <div class="logo">
+      <span class="logo-icon">🌸</span>
+      <div>
+        <h1>Hana 插件需求墙</h1>
+        <p class="subtitle">群里提出需求 · 有人认领去做 · 做完贴上仓库</p>
+      </div>
+    </div>
+  </div>
+</header>
+
+<main>
+  <div class="columns">
+
+    <!-- 左栏：需求 / 委托 -->
+    <section class="col">
+      <div class="col-head">
+        <h2>📋 需求 · 委托</h2>
+        <span class="count" id="count-need">0</span>
+        <span class="spacer"></span>
+        <button id="btn-new-need" class="btn btn-primary">＋ 发布需求</button>
+      </div>
+      <p class="col-hint">想要什么插件，写在这里；想做的在卡片下留言认领，做完点「提交成果」。</p>
+      <div id="need-list" class="post-list"></div>
+      <div id="empty-need" class="empty hidden">还没有需求，发一条让大家看看？</div>
+    </section>
+
+    <!-- 右栏：成果 -->
+    <section class="col">
+      <div class="col-head">
+        <h2>🎁 成果</h2>
+        <span class="count" id="count-done">0</span>
+        <span class="spacer"></span>
+        <button id="btn-new-done" class="btn btn-primary">＋ 发布成果</button>
+      </div>
+      <p class="col-hint">做好的插件，附上 GitHub 仓库和介绍；可回应左栏的需求。</p>
+      <div id="done-list" class="post-list"></div>
+      <div id="empty-done" class="empty hidden">还没有成果，做完记得来晒一个。</div>
+    </section>
+
+  </div>
+</main>
+
+<footer>
+  <p>Hana 插件需求墙 · 社区自建 · 数据仅保存在服务器上 · <a href="#" id="btn-admin">⚙ 管理</a></p>
+</footer>
+
+<!-- 发帖弹窗 -->
+<div id="modal-new" class="modal-mask hidden">
+  <div class="modal">
+    <div class="modal-head">
+      <h2 id="modal-new-title">发布需求</h2>
+      <button class="btn-close" data-close="modal-new">✕</button>
+    </div>
+    <form id="form-new">
+      <input type="hidden" id="f-type" value="need">
+      <div class="field">
+        <label for="f-author">你的昵称（选填）</label>
+        <input id="f-author" type="text" maxlength="50" placeholder="不填就保持匿名">
+      </div>
+      <div class="field">
+        <label for="f-contact">联系方式（选填）</label>
+        <input id="f-contact" type="text" maxlength="100" placeholder="QQ / 微信，方便对接">
+      </div>
+      <div class="field">
+        <label for="f-title">标题 <b>*</b></label>
+        <input id="f-title" type="text" maxlength="100" placeholder="一句话说清楚要什么 / 做了什么" required>
+      </div>
+      <div class="field">
+        <label for="f-content">详细说明 <b>*</b></label>
+        <textarea id="f-content" maxlength="2000" rows="5" placeholder="功能、场景、使用方式……写清楚大家才好帮你" required></textarea>
+      </div>
+      <div class="field hidden" id="field-github">
+        <label for="f-github">GitHub 仓库 <b>*</b></label>
+        <input id="f-github" type="text" maxlength="300" placeholder="用户名/仓库名，如 xiaohong/weather-hana">
+      </div>
+      <div class="field hidden" id="field-reply">
+        <label for="f-reply">回应哪个需求？（选填，回应后需求会挂到成果下面）</label>
+        <select id="f-reply"></select>
+      </div>
+      <button type="submit" class="btn btn-primary btn-block">发布</button>
+    </form>
+  </div>
+</div>
+
+<!-- 管理口令弹窗 -->
+<div id="modal-admin" class="modal-mask hidden">
+  <div class="modal modal-small">
+    <div class="modal-head">
+      <h2>⚙ 管理入口</h2>
+      <button class="btn-close" data-close="modal-admin">✕</button>
+    </div>
+    <form id="form-admin">
+      <div class="field">
+        <label for="a-password">管理口令</label>
+        <input id="a-password" type="password" maxlength="100" placeholder="输入口令" required>
+      </div>
+      <button type="submit" class="btn btn-primary btn-block">进入管理</button>
+    </form>
+  </div>
+</div>
+
+<!-- 编辑弹窗 -->
+<div id="modal-edit" class="modal-mask hidden">
+  <div class="modal">
+    <div class="modal-head">
+      <h2>编辑卡片</h2>
+      <button class="btn-close" data-close="modal-edit">✕</button>
+    </div>
+    <form id="form-edit">
+      <div class="field">
+        <label for="e-author">昵称</label>
+        <input id="e-author" type="text" maxlength="50">
+      </div>
+      <div class="field">
+        <label for="e-contact">联系方式（选填）</label>
+        <input id="e-contact" type="text" maxlength="100">
+      </div>
+      <div class="field">
+        <label for="e-title">标题 <b>*</b></label>
+        <input id="e-title" type="text" maxlength="100" required>
+      </div>
+      <div class="field">
+        <label for="e-content">详细说明 <b>*</b></label>
+        <textarea id="e-content" maxlength="2000" rows="5" required></textarea>
+      </div>
+      <div class="field hidden" id="field-e-github">
+        <label for="e-github">GitHub 仓库 <b>*</b></label>
+        <input id="e-github" type="text" maxlength="300" placeholder="用户名/仓库名，如 xiaohong/weather-hana">
+      </div>
+      <div class="field hidden" id="field-e-reply">
+        <label for="e-reply">回应哪个需求？</label>
+        <select id="e-reply"></select>
+      </div>
+      <button type="submit" class="btn btn-primary btn-block">保存修改</button>
+    </form>
+  </div>
+</div>
+
+<div id="toast" class="toast hidden"></div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
