@@ -33,6 +33,10 @@
     <button id="tab-wall" class="tab">💬 留言板</button>
   </nav>
 
+  <div class="search-bar">
+    <input id="search-input" type="search" placeholder="🔍 搜索标题或内容…" autocomplete="off">
+  </div>
+
   <div id="view-home">
   <div class="columns">
 
@@ -42,6 +46,11 @@
         <h2>📋 需求 · 委托</h2>
         <span class="count" id="count-need">0</span>
         <span class="spacer"></span>
+        <select id="sort-need" class="sort-select" title="排序方式">
+          <option value="time">🕐 最新</option>
+          <option value="likes">❤️ 点赞最多</option>
+          <option value="comments">💬 评论最多</option>
+        </select>
         <button id="btn-new-need" class="btn btn-primary">＋ 发布需求</button>
       </div>
       <p class="col-hint">想要什么插件，写在这里；想做的在卡片下留言认领，做完点「提交成果」。</p>
@@ -55,6 +64,11 @@
         <h2>🎁 成果</h2>
         <span class="count" id="count-done">0</span>
         <span class="spacer"></span>
+        <select id="sort-done" class="sort-select" title="排序方式">
+          <option value="time">🕐 最新</option>
+          <option value="likes">❤️ 点赞最多</option>
+          <option value="comments">💬 评论最多</option>
+        </select>
         <button id="btn-new-done" class="btn btn-primary">＋ 发布成果</button>
       </div>
       <p class="col-hint">做好的插件，附上 GitHub 仓库和介绍；可回应左栏的需求。</p>

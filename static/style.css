@@ -194,6 +194,43 @@ main { max-width: 1080px; margin: 0 auto; padding: 24px; }
 
 .col-hint { color: var(--text-dim); font-size: 12.5px; margin-bottom: 12px; }
 
+/* ---------- 搜索与排序 ---------- */
+.search-bar {
+  margin-bottom: 16px;
+  display: flex;
+  justify-content: center;
+}
+
+.search-bar input {
+  width: 100%;
+  max-width: 520px;
+  border: 1.5px solid var(--line);
+  border-radius: 99px;
+  background: var(--card);
+  color: var(--text);
+  font-size: 13.5px;
+  font-family: inherit;
+  padding: 9px 18px;
+  box-shadow: var(--shadow);
+  transition: border-color .15s ease;
+}
+
+.search-bar input:focus { outline: none; border-color: var(--accent); }
+
+.sort-select {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--card);
+  color: var(--text-dim);
+  font-size: 12px;
+  font-family: inherit;
+  padding: 5px 8px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.sort-select:focus { outline: none; border-color: var(--accent); }
+
 /* ---------- post cards ---------- */
 .post-list {
   column-count: 2;

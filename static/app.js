@@ -14,6 +14,9 @@
     vtoken: localStorage.getItem('hana_wall_vtoken') || '',
     reply: { pid: null, cid: null, name: '' },
     wallReply: { cid: null, name: '' },
+    sortNeed: 'time',
+    sortDone: 'time',
+    query: '',
   };
 
   const $ = (sel) => document.querySelector(sel);
@@ -281,12 +284,33 @@
     openModal('modal-detail');
   }
 
+  function filterAndSort(list, sortKey) {
+    let out = list;
+    const q = state.query.trim().toLowerCase();
+    if (q) {
+      out = out.filter((p) =>
+        String(p.title || '').toLowerCase().indexOf(q) !== -1 ||
+        String(p.content || '').toLowerCase().indexOf(q) !== -1);
+    }
+    out = out.slice();
+    if (sortKey === 'likes') {
+      out.sort((a, b) => (b.like_count || 0) - (a.like_count || 0));
+    } else if (sortKey === 'comments') {
+      out.sort((a, b) => (b.comments || []).length - (a.comments || []).length);
+    } else {
+      out.sort((a, b) => b.id - a.id);
+    }
+    return out;
+  }
+
   function render() {
     const repliedIds = new Set(
       state.posts.filter((p) => p.type === 'done' && p.reply_to).map((p) => p.reply_to));
 
-    const needs = state.posts.filter((p) => p.type === 'need' && !repliedIds.has(p.id));
-    const dones = state.posts.filter((p) => p.type === 'done');
+    const needs = filterAndSort(
+      state.posts.filter((p) => p.type === 'need' && !repliedIds.has(p.id)), state.sortNeed);
+    const dones = filterAndSort(
+      state.posts.filter((p) => p.type === 'done'), state.sortDone);
 
     $('#count-need').textContent = needs.length;
     $('#count-done').textContent = dones.length;
@@ -294,6 +318,9 @@
     $('#need-list').innerHTML = needs.map(needCard).join('');
     $('#done-list').innerHTML = dones.map(doneCard).join('');
 
+    const q = state.query.trim();
+    $('#empty-need').textContent = q ? '没有找到匹配的需求' : '还没有需求，发一条让大家看看？';
+    $('#empty-done').textContent = q ? '没有找到匹配的成果' : '还没有成果，做完记得来晒一个。';
     $('#empty-need').classList.toggle('hidden', needs.length > 0);
     $('#empty-done').classList.toggle('hidden', dones.length > 0);
     renderAdminLink();
@@ -795,6 +822,19 @@
 
   on('#tab-home', 'click', () => switchView('home'));
   on('#tab-wall', 'click', () => switchView('wall'));
+
+  on('#search-input', 'input', (e) => {
+    state.query = e.target.value;
+    render();
+  });
+  on('#sort-need', 'change', (e) => {
+    state.sortNeed = e.target.value;
+    render();
+  });
+  on('#sort-done', 'change', (e) => {
+    state.sortDone = e.target.value;
+    render();
+  });
 
   on('#btn-name', 'click', openNameModal);
   on('#form-name', 'submit', saveName);
