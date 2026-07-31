@@ -60,6 +60,24 @@ h1 {
   padding: 7px 16px;
 }
 
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.admin-badge {
+  background: linear-gradient(135deg, #f5d67a, #e0a93c);
+  color: #6b4c00;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 5px 13px;
+  border-radius: 99px;
+  box-shadow: 0 2px 8px rgba(224, 169, 60, .35);
+  animation: pop .25s ease;
+}
+
 .logout-btn { margin-top: 8px; }
 
 .field-hint {

@@ -588,6 +588,8 @@
   function renderAdminLink() {
     const link = $('#btn-admin');
     $('#btn-logs').classList.toggle('hidden', !state.token);
+    const badge = $('#admin-badge');
+    if (badge) badge.classList.toggle('hidden', !state.token);
     if (state.token) {
       link.textContent = '⚙ 管理模式中 · 退出';
     } else {
