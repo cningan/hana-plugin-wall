@@ -324,6 +324,12 @@ class Handler(BaseHTTPRequestHandler):
             logs = load_json(LOGS_FILE, [])
             self._send(200, {"ok": True, "logs": logs})
             return
+        if path == "/api/admin/check":
+            if not check_token(params.get("token", "")):
+                self._send(401, {"ok": False, "error": "未登录或登录已过期"})
+                return
+            self._send(200, {"ok": True})
+            return
         if path == "/api/visitor/me":
             name = check_visitor(params.get("token", ""))
             if not name:

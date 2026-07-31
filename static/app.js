@@ -332,6 +332,18 @@
     renderNameUI();
   }
 
+  async function checkAdminToken() {
+    if (!state.token) return;
+    try {
+      const res = await api('/api/admin/check?token=' + encodeURIComponent(state.token));
+      if (!res.ok) {
+        state.token = '';
+        localStorage.removeItem('hana_wall_token');
+      }
+    } catch (e) { /* 忽略网络错误 */ }
+    render();
+  }
+
   async function saveName(e) {
     e.preventDefault();
     const btn = $('#form-name button[type="submit"]');
@@ -597,7 +609,7 @@
       renderNameUI();
       render();
     } catch (err) {
-      toast('口令错误');
+      toast('口令错误或网络异常：' + err.message);
     } finally {
       btn.disabled = false;
       $('#a-password').value = '';
@@ -797,6 +809,7 @@
 
   renderNameUI();
   checkMe();
+  checkAdminToken();
   loadPosts();
   loadWall();
 })();
