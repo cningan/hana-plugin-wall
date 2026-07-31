@@ -155,12 +155,9 @@
 
   function renderAnnouncement() {
     const bar = $('#announcement-bar');
-    if (!state.announcement || !state.announcement.content) {
-      bar.classList.add('hidden');
-      return;
-    }
-    $('#announcement-text').textContent = state.announcement.content;
-    bar.classList.remove('hidden');
+    const has = state.announcement && state.announcement.content;
+    $('#announcement-text').textContent = has ? state.announcement.content : '暂无公告';
+    bar.classList.toggle('hidden', !has && !state.adminMode);
   }
 
   function needStatus(post) {
@@ -378,6 +375,7 @@
     $('#empty-need').classList.toggle('hidden', needs.length > 0);
     $('#empty-done').classList.toggle('hidden', dones.length > 0);
     renderAdminLink();
+    renderAnnouncement();
 
     const detailOpen = $('#modal-detail') && !$('#modal-detail').classList.contains('hidden');
     if (detailOpen && state.detailId) {
