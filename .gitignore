@@ -5,6 +5,7 @@ logs.json
 likes.json
 wall.json
 visitors.json
+admins.json
 
 # Python
 __pycache__/

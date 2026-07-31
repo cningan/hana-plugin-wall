@@ -24,6 +24,7 @@ LOGS_FILE = os.path.join(DATA_DIR, "logs.json")
 LIKES_FILE = os.path.join(DATA_DIR, "likes.json")
 WALL_FILE = os.path.join(DATA_DIR, "wall.json")
 VISITORS_FILE = os.path.join(DATA_DIR, "visitors.json")
+ADMINS_FILE = os.path.join(DATA_DIR, "admins.json")
 STATIC_DIR = os.path.join(BASE_DIR, "static")
 SECRET_FILE = os.path.join(BASE_DIR, "secret.txt")
 
@@ -82,6 +83,16 @@ def load_secret():
 
 def check_token(token):
     return bool(token) and token in TOKENS
+
+
+def load_tokens():
+    """启动时从文件加载管理令牌（重启不失效）"""
+    global TOKENS
+    TOKENS = set(load_json(ADMINS_FILE, []))
+
+
+def save_tokens():
+    save_json(ADMINS_FILE, sorted(TOKENS))
 
 
 def check_visitor(token):
@@ -349,6 +360,7 @@ class Handler(BaseHTTPRequestHandler):
                 if secret and hmac.compare_digest(password.encode("utf-8"), secret.encode("utf-8")):
                     token = secrets.token_hex(16)
                     TOKENS.add(token)
+                    save_tokens()
                     self._send(200, {"ok": True, "token": token})
                 else:
                     self._send(403, {"ok": False, "error": "口令错误"})
@@ -578,6 +590,7 @@ class Handler(BaseHTTPRequestHandler):
 
 if __name__ == "__main__":
     os.makedirs(DATA_DIR, exist_ok=True)
+    load_tokens()
     port = int(os.environ.get("PORT", "3000"))
     print(f"Hana 插件需求墙已启动：http://0.0.0.0:{port}（数据文件：{DATA_FILE}）")
     ThreadingHTTPServer(("0.0.0.0", port), Handler).serve_forever()
