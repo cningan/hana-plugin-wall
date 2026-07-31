@@ -196,11 +196,92 @@ main { max-width: 1080px; margin: 0 auto; padding: 24px; }
 
 /* ---------- post cards ---------- */
 .post-list {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
+  column-count: 2;
+  column-gap: 14px;
 }
 
+/* 列表精简卡片（小红书式） */
+.card {
+  break-inside: avoid;
+  -webkit-column-break-inside: avoid;
+  width: 100%;
+  margin-bottom: 14px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  box-shadow: var(--shadow);
+  animation: rise .25s ease both;
+  cursor: pointer;
+  transition: transform .12s ease, box-shadow .12s ease;
+}
+
+.card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 14px rgba(120, 100, 70, .14);
+}
+
+.card.need { border-top: 3px solid var(--accent); }
+.card.done { border-top: 3px solid var(--green); }
+
+.card-title {
+  font-size: 14.5px;
+  font-weight: 700;
+  line-height: 1.4;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-word;
+}
+
+.card-excerpt {
+  color: #6b6355;
+  font-size: 12.5px;
+  margin-top: 5px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-word;
+}
+
+.card-meta {
+  margin-top: 8px;
+  color: var(--text-dim);
+  font-size: 11.5px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.card-meta .author { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.card-meta .spacer { flex: 1; }
+
+.card-foot {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--line-strong);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.card-count {
+  font-size: 12px;
+  color: var(--text-dim);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.like-mini {
+  padding: 2px 10px;
+  font-size: 12px;
+}
+
+/* 详情弹窗内完整卡片 */
 .post {
   background: var(--card);
   border: 1px solid var(--line);
@@ -212,6 +293,8 @@ main { max-width: 1080px; margin: 0 auto; padding: 24px; }
 
 .post.need { border-left: 3px solid var(--accent); }
 .post.done { border-left: 3px solid var(--green); }
+
+.modal-detail { max-width: 620px; }
 
 @keyframes rise {
   from { opacity: 0; transform: translateY(6px); }

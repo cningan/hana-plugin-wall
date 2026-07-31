@@ -148,11 +148,11 @@
       </div>`;
   }
 
-  function likeBtn(post) {
+  function likeBtn(post, mini) {
     const names = (post.like_names || []).map((n, i) =>
       (post.like_admins && post.like_admins[i] ? '👑 ' : '') + esc(n)).join('、');
     const title = names ? '赞过：' + names : '点赞支持一下（防刷会记录设备指纹）';
-    return `<button type="button" class="like-btn${post.liked ? ' liked' : ''}" data-like="${post.id}" title="${title}">${post.liked ? '❤️' : '🤍'} <span>${post.like_count || 0}</span></button>`;
+    return `<button type="button" class="like-btn${mini ? ' like-mini' : ''}${post.liked ? ' liked' : ''}" data-like="${post.id}" title="${title}">${post.liked ? '❤️' : '🤍'} <span>${post.like_count || 0}</span></button>`;
   }
 
   function adminTag(item) {
@@ -202,12 +202,67 @@
       </div>`;
   }
 
+  function cardMeta(post) {
+    const date = String(post.created_at || '').slice(0, 10);
+    return `
+      <div class="card-meta">
+        <span class="author">🧑 ${esc(authorName(post))}</span>
+        <span class="spacer"></span>
+        <span>${esc(date)}</span>
+      </div>`;
+  }
+
   function needCard(post) {
     return `
-      <article class="post need" data-pid="${post.id}">
-        <div class="post-head">
-          <h3 class="post-title">${esc(post.title)}</h3>
+      <article class="card need" data-open-detail="${post.id}">
+        <h3 class="card-title">${esc(post.title)}</h3>
+        <p class="card-excerpt">${esc(post.content)}</p>
+        ${cardMeta(post)}
+        <div class="card-foot">
+          <span class="card-count">💬 ${(post.comments || []).length}</span>
+          ${likeBtn(post, true)}
         </div>
+      </article>`;
+  }
+
+  function doneCard(post) {
+    return `
+      <article class="card done" data-open-detail="${post.id}">
+        <h3 class="card-title">${esc(post.title)}</h3>
+        <p class="card-excerpt">${esc(post.content)}</p>
+        ${cardMeta(post)}
+        <div class="card-foot">
+          <span class="card-count">💬 ${(post.comments || []).length}</span>
+          ${likeBtn(post, true)}
+        </div>
+      </article>`;
+  }
+
+  function renderDetail(id) {
+    const post = state.posts.find((p) => p.id === id);
+    if (!post) return;
+    state.detailId = id;
+    const isDone = post.type === 'done';
+    const replyTo = isDone ? state.posts.find((p) => p.id === post.reply_to) : null;
+    const replyHtml = replyTo ? `
+      <div class="reply-box">
+        📋 响应需求 #${replyTo.id}「<span class="reply-need">${esc(replyTo.title)}</span>」
+      </div>` : '';
+    const head = isDone ? `
+      <div class="post-head">
+        <h3 class="post-title">${esc(post.title)}</h3>
+        <button type="button" class="repo-copy" data-copy-repo="${post.id}" title="复制仓库名，粘贴给智能体即可安装">📋 复制仓库名</button>
+        <a class="repo-link" href="${esc(githubUrl(post.github))}" target="_blank" rel="noopener noreferrer">GitHub ↗</a>
+      </div>` : `
+      <div class="post-head">
+        <h3 class="post-title">${esc(post.title)}</h3>
+      </div>`;
+    const actions = isDone ? '<span class="action-spacer"></span>' : `
+      <button class="btn btn-primary" data-submit-done="${post.id}">📤 提交成果</button>
+      <span class="action-spacer"></span>`;
+    $('#detail-body').innerHTML = `
+      <article class="post ${isDone ? 'done' : 'need'}" data-pid="${post.id}">
+        ${head}
         <p class="post-content">${esc(post.content)}</p>
         <div class="post-meta">
           <span class="group">👥 ${esc(post.group)}</span>
@@ -215,44 +270,15 @@
           ${post.contact ? `<span>📮 ${esc(post.contact)}</span>` : ''}
           <span>🕐 ${esc(post.created_at)}</span>
         </div>
-        ${commentAreaHtml(post)}
-        <div class="post-actions">
-          <button class="btn btn-primary" data-submit-done="${post.id}">📤 提交成果</button>
-          <span class="action-spacer"></span>
-          ${likeBtn(post)}
-        </div>
-        ${adminBar(post)}
-      </article>`;
-  }
-
-  function doneCard(post) {
-    const replyTo = state.posts.find((p) => p.id === post.reply_to);
-    const replyHtml = replyTo ? `
-      <div class="reply-box">
-        📋 响应需求 #${replyTo.id}「<span class="reply-need">${esc(replyTo.title)}</span>」
-      </div>` : '';
-
-    return `
-      <article class="post done" data-pid="${post.id}">
-        <div class="post-head">
-          <h3 class="post-title">${esc(post.title)}</h3>
-          <button type="button" class="repo-copy" data-copy-repo="${post.id}" title="复制仓库名，粘贴给智能体即可安装">📋 复制仓库名</button>
-          <a class="repo-link" href="${esc(githubUrl(post.github))}" target="_blank" rel="noopener noreferrer">GitHub ↗</a>
-        </div>
-        <p class="post-content">${esc(post.content)}</p>
-        <div class="post-meta">
-          <span class="group">👥 ${esc(post.group)}</span>
-          <span>🧑 ${esc(authorName(post))}</span>
-          <span>🕐 ${esc(post.created_at)}</span>
-        </div>
         ${replyHtml}
         ${commentAreaHtml(post)}
         <div class="post-actions">
-          <span class="action-spacer"></span>
+          ${actions}
           ${likeBtn(post)}
         </div>
         ${adminBar(post)}
       </article>`;
+    openModal('modal-detail');
   }
 
   function render() {
@@ -271,6 +297,13 @@
     $('#empty-need').classList.toggle('hidden', needs.length > 0);
     $('#empty-done').classList.toggle('hidden', dones.length > 0);
     renderAdminLink();
+
+    const detailOpen = $('#modal-detail') && !$('#modal-detail').classList.contains('hidden');
+    if (detailOpen && state.detailId) {
+      const p = state.posts.find((x) => x.id === state.detailId);
+      if (p) renderDetail(state.detailId);
+      else { closeModal('modal-detail'); state.detailId = null; }
+    }
   }
 
   /* ---------- 留言板渲染 ---------- */
@@ -540,7 +573,7 @@
 
   /* ---------- 点赞 ---------- */
 
-  async function toggleLike(pid, btn) {
+  async function toggleLike(pid) {
     if (!requireLogin()) return;
     try {
       const res = await api(`/api/posts/${pid}/like`, { fp: state.fp, token: state.vtoken });
@@ -552,11 +585,7 @@
         post.like_names = res.like_names;
         post.like_admins = res.like_admins;
       }
-      btn.classList.toggle('liked', res.liked);
-      btn.innerHTML = (res.liked ? '❤️' : '🤍') + ' <span>' + res.count + '</span>';
-      const names = (res.like_names || []).map((n, i) =>
-        (res.like_admins && res.like_admins[i] ? '👑 ' : '') + esc(n)).join('、');
-      btn.title = names ? '赞过：' + names : '点赞支持一下（防刷会记录设备指纹）';
+      render();
       toast(res.liked ? '已点赞 ❤️' : '已取消点赞');
     } catch (err) {
       toast('点赞失败：' + err.message);
@@ -564,6 +593,7 @@
   }
 
   function openSubmitDone(id) {
+    closeModal('modal-detail');
     resetNewForm('done', id);
     openModal('modal-new');
     $('#f-title').focus();
@@ -688,6 +718,7 @@
   function openEdit(id) {
     const post = state.posts.find((p) => p.id === id);
     if (!post) return;
+    closeModal('modal-detail');
     state.editId = id;
     $('#e-author').value = post.author || '';
     $('#e-contact').value = post.contact || '';
@@ -829,11 +860,11 @@
       const likeEl = e.target.closest('[data-like]');
       const replyBtn = e.target.closest('[data-reply-btn]');
       const copyBtn = e.target.closest('[data-copy-repo]');
-      if (doneBtn) openSubmitDone(Number(doneBtn.dataset.submitDone));
-      if (editBtn) openEdit(Number(editBtn.dataset.edit));
-      if (delBtn) deletePost(Number(delBtn.dataset.del));
-      if (likeEl) toggleLike(Number(likeEl.dataset.like), likeEl);
-      if (copyBtn) copyRepo(Number(copyBtn.dataset.copyRepo));
+      if (doneBtn) { openSubmitDone(Number(doneBtn.dataset.submitDone)); return; }
+      if (editBtn) { openEdit(Number(editBtn.dataset.edit)); return; }
+      if (delBtn) { deletePost(Number(delBtn.dataset.del)); return; }
+      if (likeEl) { toggleLike(Number(likeEl.dataset.like)); return; }
+      if (copyBtn) { copyRepo(Number(copyBtn.dataset.copyRepo)); return; }
       if (replyBtn) {
         const postEl = e.target.closest('.post');
         const pid = Number(postEl.dataset.pid);
@@ -841,12 +872,16 @@
         const p = state.posts.find((x) => x.id === pid);
         const c = p && p.comments ? p.comments.find((x) => x.id === cid) : null;
         if (c) setReply(pid, cid, c.name);
+        return;
       }
+      const openEl = e.target.closest('[data-open-detail]');
+      if (openEl) renderDetail(Number(openEl.dataset.openDetail));
     });
   }
 
   bindList('#need-list');
   bindList('#done-list');
+  bindList('#modal-detail');
 
   renderNameUI();
   checkMe();
