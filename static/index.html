@@ -18,10 +18,17 @@
         <p class="subtitle">群里提出需求 · 有人认领去做 · 做完贴上仓库</p>
       </div>
     </div>
+    <button id="btn-name" class="btn btn-outline name-btn" title="设置昵称，留言和点赞会自动带上">👤 匿名</button>
   </div>
 </header>
 
 <main>
+  <nav class="tabs">
+    <button id="tab-home" class="tab active">🏠 需求 · 成果</button>
+    <button id="tab-wall" class="tab">💬 留言板</button>
+  </nav>
+
+  <div id="view-home">
   <div class="columns">
 
     <!-- 左栏：需求 / 委托 -->
@@ -51,10 +58,28 @@
     </section>
 
   </div>
+  </div>
+
+  <!-- 留言板视图 -->
+  <section id="view-wall" class="hidden">
+    <div class="col-head">
+      <h2>💬 留言板</h2>
+      <span class="count" id="count-wall">0</span>
+      <span class="spacer"></span>
+    </div>
+    <p class="col-hint">群里聊：插件点子、求助、找人一起做……留言可回复。</p>
+    <form id="form-wall" class="wall-form">
+      <input id="w-content" type="text" maxlength="500" placeholder="说点什么…" required>
+      <button type="submit" class="btn-small">发布</button>
+    </form>
+    <div id="wall-reply-badge" class="reply-badge hidden"></div>
+    <div id="wall-list" class="wall-list"></div>
+    <div id="empty-wall" class="empty hidden">还没有留言，来说第一句吧。</div>
+  </section>
 </main>
 
 <footer>
-  <p>Hana 插件需求墙 · 社区自建 · 数据仅保存在服务器上 · <a href="#" id="btn-admin">⚙ 管理</a></p>
+  <p>Hana 插件需求墙 · 社区自建 · 数据仅保存在服务器上 · <a href="#" id="btn-admin">⚙ 管理</a> · <a href="#" id="btn-logs" class="hidden">📜 操作日志</a></p>
 </footer>
 
 <!-- 发帖弹窗 -->
@@ -91,6 +116,25 @@
         <select id="f-reply"></select>
       </div>
       <button type="submit" class="btn btn-primary btn-block">发布</button>
+    </form>
+  </div>
+</div>
+
+<!-- 昵称弹窗 -->
+<div id="modal-name" class="modal-mask hidden">
+  <div class="modal modal-small">
+    <div class="modal-head">
+      <h2>👤 我的昵称</h2>
+      <button class="btn-close" data-close="modal-name">✕</button>
+    </div>
+    <form id="form-name">
+      <div class="field">
+        <label for="n-name">昵称（可随时修改）</label>
+        <input id="n-name" type="text" maxlength="50" placeholder="群友怎么称呼你？">
+      </div>
+      <p class="field-hint">留言、点赞会自动带上昵称。清空保存或点「退出登录」即恢复浏览模式。</p>
+      <button type="submit" class="btn btn-primary btn-block">保存</button>
+      <button type="button" id="btn-name-logout" class="btn btn-outline btn-block logout-btn hidden">退出登录</button>
     </form>
   </div>
 </div>
@@ -146,6 +190,17 @@
       </div>
       <button type="submit" class="btn btn-primary btn-block">保存修改</button>
     </form>
+  </div>
+</div>
+
+<!-- 操作日志弹窗（仅管理模式可见） -->
+<div id="modal-logs" class="modal-mask hidden">
+  <div class="modal">
+    <div class="modal-head">
+      <h2>📜 操作日志</h2>
+      <button class="btn-close" data-close="modal-logs">✕</button>
+    </div>
+    <div id="logs-list" class="logs-list"></div>
   </div>
 </div>
 

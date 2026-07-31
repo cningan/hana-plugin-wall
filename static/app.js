@@ -3,15 +3,22 @@
 
   const state = {
     posts: [],
+    wall: [],
     formType: 'need',
     editId: null,
-    token: sessionStorage.getItem('hana_wall_token') || '',
+    token: localStorage.getItem('hana_wall_token') || '',
+    view: 'home',
+    fp: getFingerprint(),
+    me: localStorage.getItem('hana_wall_me') || '',
+    vtoken: localStorage.getItem('hana_wall_vtoken') || '',
+    reply: { pid: null, cid: null, name: '' },
+    wallReply: { cid: null, name: '' },
   };
 
   const $ = (sel) => document.querySelector(sel);
 
   function esc(s) {
-    return String(s ?? '').replace(/[&<>"']/g, (c) => ({
+    return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({
       '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
     }[c]));
   }
@@ -47,16 +54,87 @@
   function openModal(id) { $(`#${id}`).classList.remove('hidden'); }
   function closeModal(id) { $(`#${id}`).classList.add('hidden'); }
 
+  /* ---------- 浏览器指纹（防刷赞） ---------- */
+
+  function getFingerprint() {
+    try {
+      const cached = localStorage.getItem('hana_wall_fp');
+      if (cached && /^[0-9a-f]{8,64}$/.test(cached)) return cached;
+      let canvasHash = '';
+      try {
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.textBaseline = 'top';
+          ctx.font = '14px Arial';
+          ctx.fillStyle = '#f60';
+          ctx.fillRect(0, 0, 60, 10);
+          ctx.fillStyle = '#069';
+          ctx.fillText('hana-wall', 2, 2);
+          canvasHash = canvas.toDataURL().slice(-80);
+        }
+      } catch (e) { /* 忽略 canvas 失败 */ }
+      const parts = [
+        navigator.userAgent,
+        navigator.language,
+        navigator.platform,
+        screen.width + 'x' + screen.height + 'x' + screen.colorDepth,
+        new Date().getTimezoneOffset(),
+        canvasHash,
+        navigator.hardwareConcurrency || '',
+        navigator.deviceMemory || '',
+        Intl.DateTimeFormat().resolvedOptions().locale || '',
+      ].join('|');
+      let h1 = 0x811c9dc5;
+      for (let i = 0; i < parts.length; i++) {
+        h1 ^= parts.charCodeAt(i);
+        h1 = Math.imul(h1, 0x01000193);
+      }
+      let h2 = 0x811c9dc5 ^ h1;
+      for (let i = parts.length - 1; i >= 0; i--) {
+        h2 ^= parts.charCodeAt(i);
+        h2 = Math.imul(h2, 0x01000193);
+      }
+      const fp = (h1 >>> 0).toString(16).padStart(8, '0') +
+                 (h2 >>> 0).toString(16).padStart(8, '0');
+      localStorage.setItem('hana_wall_fp', fp);
+      return fp;
+    } catch (e) {
+      return 'a' + Date.now().toString(16).padStart(8, '0');
+    }
+  }
+
+  /* ---------- 视图切换 ---------- */
+
+  function switchView(v) {
+    state.view = v;
+    $('#view-home').classList.toggle('hidden', v !== 'home');
+    $('#view-wall').classList.toggle('hidden', v !== 'wall');
+    $('#tab-home').classList.toggle('active', v === 'home');
+    $('#tab-wall').classList.toggle('active', v === 'wall');
+  }
+
   /* ---------- 加载与渲染 ---------- */
 
   async function loadPosts() {
     try {
-      const res = await api('/api/posts');
+      const res = await api('/api/posts?fp=' + state.fp);
       if (!res.ok) throw new Error(res.error);
       state.posts = res.posts;
       render();
     } catch (e) {
       toast('加载失败：' + e.message);
+    }
+  }
+
+  async function loadWall() {
+    try {
+      const res = await api('/api/wall');
+      if (!res.ok) throw new Error(res.error);
+      state.wall = res.wall;
+      renderWall();
+    } catch (e) {
+      toast('留言板加载失败：' + e.message);
     }
   }
 
@@ -69,15 +147,58 @@
       </div>`;
   }
 
-  function needCard(post) {
-    const comments = (post.comments || []).map((c) => `
-      <div class="comment">
-        <b>${esc(c.name)}</b><span class="comment-time">${esc(c.created_at)}</span>
-        <p>${esc(c.content)}</p>
-      </div>`).join('');
+  function likeBtn(post) {
+    const names = (post.like_names || []).map(esc).join('、');
+    const title = names ? '赞过：' + names : '点赞支持一下（防刷会记录设备指纹）';
+    return `<button type="button" class="like-btn${post.liked ? ' liked' : ''}" data-like="${post.id}" title="${title}">${post.liked ? '❤️' : '🤍'} <span>${post.like_count || 0}</span></button>`;
+  }
 
+  function commentNodeHtml(c, all, byReplyTo, depth) {
+    if (depth > 10) return '';
+    const kids = (byReplyTo.get(c.id) || []).map((k) => commentNodeHtml(k, all, byReplyTo, depth + 1));
+    const parent = all.find((x) => x.id === c.reply_to);
     return `
-      <article class="post need">
+      <div class="comment${c.reply_to ? ' comment-reply' : ''}">
+        <b>${esc(c.name)}</b>
+        ${parent ? `<span class="comment-ref">回复 ${esc(parent.name)}</span>` : ''}
+        <span class="comment-time">${esc(c.created_at)}</span>
+        <p>${esc(c.content)}</p>
+        <button type="button" class="comment-reply-btn" data-reply-btn="${c.id}">↩ 回复</button>
+        ${kids.join('')}
+      </div>`;
+  }
+
+  function commentAreaHtml(post) {
+    const comments = post.comments || [];
+    const withId = comments.filter((c) => c.id != null);
+    const orphans = comments.filter((c) => c.id == null);
+    const byReplyTo = new Map();
+    withId.forEach((c) => {
+      const arr = byReplyTo.get(c.reply_to) || [];
+      arr.push(c);
+      byReplyTo.set(c.reply_to, arr);
+    });
+    const tops = withId.filter((c) => !c.reply_to || !withId.some((x) => x.id === c.reply_to));
+    const listHtml = (tops.length || orphans.length)
+      ? '<div class="comment-list">' +
+        orphans.map((c) => commentNodeHtml(c, [], new Map(), 0)).join('') +
+        tops.map((c) => commentNodeHtml(c, withId, byReplyTo, 0)).join('') +
+        '</div>'
+      : '';
+    return `
+      <div class="comment-area" data-area="${post.id}">
+        ${listHtml}
+        <form class="comment-form" data-comment="${post.id}">
+          <input class="comment-text" maxlength="200" placeholder="留言：我来做 / 有想法…" required>
+          <button class="btn-small" type="submit">留言</button>
+        </form>
+        <div class="reply-badge hidden"></div>
+      </div>`;
+  }
+
+  function needCard(post) {
+    return `
+      <article class="post need" data-pid="${post.id}">
         <div class="post-head">
           <h3 class="post-title">${esc(post.title)}</h3>
         </div>
@@ -88,16 +209,11 @@
           ${post.contact ? `<span>📮 ${esc(post.contact)}</span>` : ''}
           <span>🕐 ${esc(post.created_at)}</span>
         </div>
-        <div class="comment-area">
-          <div class="comment-list">${comments}</div>
-          <form class="comment-form" data-comment="${post.id}">
-            <input class="comment-name" maxlength="50" placeholder="昵称（选填）">
-            <input class="comment-text" maxlength="200" placeholder="留言：我来做 / 有想法…" required>
-            <button class="btn-small" type="submit">留言</button>
-          </form>
-        </div>
+        ${commentAreaHtml(post)}
         <div class="post-actions">
           <button class="btn btn-primary" data-submit-done="${post.id}">📤 提交成果</button>
+          <span class="action-spacer"></span>
+          ${likeBtn(post)}
         </div>
         ${adminBar(post)}
       </article>`;
@@ -111,9 +227,10 @@
       </div>` : '';
 
     return `
-      <article class="post done">
+      <article class="post done" data-pid="${post.id}">
         <div class="post-head">
           <h3 class="post-title">${esc(post.title)}</h3>
+          <button type="button" class="repo-copy" data-copy-repo="${post.id}" title="复制仓库名，粘贴给智能体即可安装">📋 复制仓库名</button>
           <a class="repo-link" href="${esc(githubUrl(post.github))}" target="_blank" rel="noopener noreferrer">GitHub ↗</a>
         </div>
         <p class="post-content">${esc(post.content)}</p>
@@ -123,6 +240,11 @@
           <span>🕐 ${esc(post.created_at)}</span>
         </div>
         ${replyHtml}
+        ${commentAreaHtml(post)}
+        <div class="post-actions">
+          <span class="action-spacer"></span>
+          ${likeBtn(post)}
+        </div>
         ${adminBar(post)}
       </article>`;
   }
@@ -143,6 +265,110 @@
     $('#empty-need').classList.toggle('hidden', needs.length > 0);
     $('#empty-done').classList.toggle('hidden', dones.length > 0);
     renderAdminLink();
+  }
+
+  /* ---------- 留言板渲染 ---------- */
+
+  function wallItemHtml(m, depth) {
+    if (depth > 10) return '';
+    const kids = state.wall
+      .filter((x) => x.reply_to === m.id)
+      .sort((a, b) => a.id - b.id)
+      .map((k) => wallItemHtml(k, (depth || 0) + 1)).join('');
+    const parent = state.wall.find((x) => x.id === m.reply_to);
+    return `
+      <div class="wall-item${m.reply_to ? ' wall-reply' : ''}">
+        <b>${esc(m.name)}</b>
+        ${parent ? `<span class="comment-ref">回复 ${esc(parent.name)}</span>` : ''}
+        <span class="comment-time">${esc(m.created_at)}</span>
+        <p>${esc(m.content)}</p>
+        <button type="button" class="comment-reply-btn" data-wall-reply="${m.id}">↩ 回复</button>
+        ${kids}
+      </div>`;
+  }
+
+  function renderWall() {
+    $('#count-wall').textContent = state.wall.length;
+    const tops = state.wall
+      .filter((m) => !m.reply_to || !state.wall.some((x) => x.id === m.reply_to))
+      .sort((a, b) => b.id - a.id);
+    $('#wall-list').innerHTML = tops.map(wallItemHtml).join('');
+    $('#empty-wall').classList.toggle('hidden', state.wall.length > 0);
+  }
+
+  /* ---------- 游客昵称 / 登录 ---------- */
+
+  function renderNameUI() {
+    $('#btn-name').textContent = '👤 ' + (state.me || '匿名');
+    $('#btn-name-logout').classList.toggle('hidden', !state.vtoken);
+  }
+
+  function requireLogin() {
+    if (state.vtoken) return true;
+    toast('请先点击右上角「👤 匿名」设置昵称，才能留言和点赞');
+    return false;
+  }
+
+  function openNameModal() {
+    $('#n-name').value = state.me;
+    openModal('modal-name');
+    $('#n-name').focus();
+  }
+
+  async function checkMe() {
+    if (!state.vtoken) return;
+    try {
+      const res = await api('/api/visitor/me?token=' + encodeURIComponent(state.vtoken));
+      if (res.ok) {
+        state.me = res.name;
+        localStorage.setItem('hana_wall_me', res.name);
+      } else {
+        state.vtoken = '';
+        state.me = '';
+        localStorage.removeItem('hana_wall_vtoken');
+        localStorage.removeItem('hana_wall_me');
+      }
+    } catch (e) { /* 忽略网络错误 */ }
+    renderNameUI();
+  }
+
+  async function saveName(e) {
+    e.preventDefault();
+    const btn = $('#form-name button[type="submit"]');
+    btn.disabled = true;
+    try {
+      const name = $('#n-name').value.trim();
+      if (!name) {
+        await logoutVisitor();
+      } else {
+        const res = await api('/api/visitor/login', { name, fp: state.fp });
+        if (!res.ok) throw new Error(res.error);
+        state.me = res.name;
+        state.vtoken = res.token;
+        localStorage.setItem('hana_wall_me', res.name);
+        localStorage.setItem('hana_wall_vtoken', res.token);
+        toast('昵称已设置，现在可以留言和点赞了 👤');
+      }
+      closeModal('modal-name');
+      renderNameUI();
+      loadPosts();
+      loadWall();
+    } catch (err) {
+      toast('设置失败：' + err.message);
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  async function logoutVisitor() {
+    if (state.vtoken) {
+      try { await api('/api/visitor/logout', { token: state.vtoken }); } catch (e) { /* 忽略 */ }
+    }
+    state.me = '';
+    state.vtoken = '';
+    localStorage.removeItem('hana_wall_me');
+    localStorage.removeItem('hana_wall_vtoken');
+    toast('已退出，恢复浏览模式');
   }
 
   /* ---------- 发帖 ---------- */
@@ -214,22 +440,103 @@
     }
   }
 
-  /* ---------- 留言 ---------- */
+  /* ---------- 留言（帖子卡片） ---------- */
 
   async function submitComment(e) {
     e.preventDefault();
+    if (!requireLogin()) return;
     const form = e.target;
     const id = Number(form.dataset.comment);
-    const name = form.querySelector('.comment-name').value.trim();
     const content = form.querySelector('.comment-text').value.trim();
     if (!content) return;
+    const body = { token: state.vtoken, content };
+    if (state.reply.pid === id && state.reply.cid) body.reply_to = state.reply.cid;
     try {
-      const res = await api(`/api/posts/${id}/comments`, { name, content });
+      const res = await api(`/api/posts/${id}/comments`, body);
       if (!res.ok) throw new Error(res.error);
+      clearReply();
       toast('留言成功 💬');
       await loadPosts();
     } catch (err) {
       toast('留言失败：' + err.message);
+    }
+  }
+
+  function setReply(pid, cid, name) {
+    state.reply = { pid, cid, name };
+    document.querySelectorAll('.reply-badge').forEach((b) => {
+      const area = b.closest('.comment-area');
+      if (area && Number(area.dataset.area) === pid) {
+        b.textContent = '↩ 正在回复 ' + name + '（点击取消）';
+        b.classList.remove('hidden');
+        const text = b.closest('.comment-area') ? b.closest('.comment-area').querySelector('.comment-text') : null;
+        if (text) text.focus();
+      } else {
+        b.classList.add('hidden');
+      }
+    });
+  }
+
+  function clearReply() {
+    state.reply = { pid: null, cid: null, name: '' };
+    document.querySelectorAll('.reply-badge').forEach((b) => b.classList.add('hidden'));
+  }
+
+  /* ---------- 留言板 ---------- */
+
+  async function submitWall(e) {
+    e.preventDefault();
+    if (!requireLogin()) return;
+    const body = { token: state.vtoken, content: $('#w-content').value.trim() };
+    if (state.wallReply.cid) body.reply_to = state.wallReply.cid;
+    const btn = $('#form-wall button[type="submit"]');
+    btn.disabled = true;
+    try {
+      const res = await api('/api/wall', body);
+      if (!res.ok) throw new Error(res.error);
+      $('#w-content').value = '';
+      clearWallReply();
+      toast('留言成功 💬');
+      await loadWall();
+    } catch (err) {
+      toast('留言失败：' + err.message);
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  function setWallReply(cid, name) {
+    state.wallReply = { cid, name };
+    const b = $('#wall-reply-badge');
+    b.textContent = '↩ 正在回复 ' + name + '（点击取消）';
+    b.classList.remove('hidden');
+    $('#w-content').focus();
+  }
+
+  function clearWallReply() {
+    state.wallReply = { cid: null, name: '' };
+    $('#wall-reply-badge').classList.add('hidden');
+  }
+
+  /* ---------- 点赞 ---------- */
+
+  async function toggleLike(pid, btn) {
+    if (!requireLogin()) return;
+    try {
+      const res = await api(`/api/posts/${pid}/like`, { fp: state.fp, token: state.vtoken });
+      if (!res.ok) throw new Error(res.error);
+      const post = state.posts.find((p) => p.id === pid);
+      if (post) {
+        post.like_count = res.count;
+        post.liked = res.liked;
+        post.like_names = res.like_names;
+      }
+      btn.classList.toggle('liked', res.liked);
+      btn.innerHTML = (res.liked ? '❤️' : '🤍') + ' <span>' + res.count + '</span>';
+      btn.title = res.like_names.length ? '赞过：' + res.like_names.join('、') : '点赞支持一下（防刷会记录设备指纹）';
+      toast(res.liked ? '已点赞 ❤️' : '已取消点赞');
+    } catch (err) {
+      toast('点赞失败：' + err.message);
     }
   }
 
@@ -239,10 +546,36 @@
     $('#f-title').focus();
   }
 
+  /* ---------- 复制仓库名 ---------- */
+
+  async function copyRepo(id) {
+    const post = state.posts.find((p) => p.id === id);
+    if (!post || !post.github) return;
+    const text = post.github;
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+      }
+      toast('仓库名已复制：' + text + ' 📋');
+    } catch (err) {
+      toast('自动复制失败，请手动复制：' + text);
+    }
+  }
+
   /* ---------- 管理 ---------- */
 
   function renderAdminLink() {
     const link = $('#btn-admin');
+    $('#btn-logs').classList.toggle('hidden', !state.token);
     if (state.token) {
       link.textContent = '⚙ 管理模式中 · 退出';
     } else {
@@ -258,9 +591,10 @@
       const res = await api('/api/admin/login', { password: $('#a-password').value });
       if (!res.ok) throw new Error(res.error);
       state.token = res.token;
-      sessionStorage.setItem('hana_wall_token', state.token);
+      localStorage.setItem('hana_wall_token', state.token);
       closeModal('modal-admin');
       toast('已进入管理模式 ✨');
+      renderNameUI();
       render();
     } catch (err) {
       toast('口令错误');
@@ -272,9 +606,33 @@
 
   function logoutAdmin() {
     state.token = '';
-    sessionStorage.removeItem('hana_wall_token');
+    localStorage.removeItem('hana_wall_token');
     toast('已退出管理模式');
     render();
+  }
+
+  async function openLogs() {
+    try {
+      const res = await api('/api/admin/logs?token=' + encodeURIComponent(state.token));
+      if (!res.ok) throw new Error(res.error);
+      const list = $('#logs-list');
+      if (!res.logs.length) {
+        list.innerHTML = '<p class="empty-inline">暂无操作记录</p>';
+      } else {
+        list.innerHTML = res.logs.map((l) => `
+          <div class="log-item">
+            <div class="log-head">
+              <span class="log-action ${esc(l.action)}">${l.action === 'edit' ? '✏ 编辑' : '🗑 删除'}</span>
+              <b>#${l.post_id}「${esc(l.title)}」</b>
+              <span class="comment-time">${esc(l.time)}</span>
+            </div>
+            <div class="log-detail">${esc(l.detail)}</div>
+          </div>`).join('');
+      }
+      openModal('modal-logs');
+    } catch (err) {
+      toast('加载日志失败：' + err.message);
+    }
   }
 
   function openEdit(id) {
@@ -349,12 +707,34 @@
 
   /* ---------- 事件绑定 ---------- */
 
-  $('#btn-new-need').addEventListener('click', () => { resetNewForm('need'); openModal('modal-new'); });
-  $('#btn-new-done').addEventListener('click', () => { resetNewForm('done'); openModal('modal-new'); });
-  $('#btn-admin').addEventListener('click', (e) => {
+  function on(sel, evt, fn) {
+    const el = $(sel);
+    if (el) el.addEventListener(evt, fn);
+  }
+
+  on('#tab-home', 'click', () => switchView('home'));
+  on('#tab-wall', 'click', () => switchView('wall'));
+
+  on('#btn-name', 'click', openNameModal);
+  on('#form-name', 'submit', saveName);
+  on('#btn-name-logout', 'click', (e) => {
+    e.preventDefault();
+    logoutVisitor();
+    closeModal('modal-name');
+    renderNameUI();
+    loadPosts();
+    loadWall();
+  });
+  on('#btn-new-need', 'click', () => { resetNewForm('need'); openModal('modal-new'); });
+  on('#btn-new-done', 'click', () => { resetNewForm('done'); openModal('modal-new'); });
+  on('#btn-admin', 'click', (e) => {
     e.preventDefault();
     if (state.token) logoutAdmin();
     else openModal('modal-admin');
+  });
+  on('#btn-logs', 'click', (e) => {
+    e.preventDefault();
+    openLogs();
   });
 
   document.querySelectorAll('.btn-close').forEach((b) =>
@@ -368,30 +748,55 @@
     }
   });
 
-  $('#form-new').addEventListener('submit', submitNew);
-  $('#form-admin').addEventListener('submit', submitAdmin);
-  $('#form-edit').addEventListener('submit', submitEdit);
+  on('#form-new', 'submit', submitNew);
+  on('#form-admin', 'submit', submitAdmin);
+  on('#form-edit', 'submit', submitEdit);
+  on('#form-wall', 'submit', submitWall);
+  on('#wall-reply-badge', 'click', clearWallReply);
 
-  $('#need-list').addEventListener('submit', (e) => {
-    const form = e.target.closest('.comment-form');
-    if (form) submitComment(e);
+  on('#wall-list', 'click', (e) => {
+    const replyBtn = e.target.closest('[data-wall-reply]');
+    if (!replyBtn) return;
+    const cid = Number(replyBtn.dataset.wallReply);
+    const m = state.wall.find((x) => x.id === cid);
+    if (m) setWallReply(cid, m.name);
   });
 
-  $('#need-list').addEventListener('click', (e) => {
-    const doneBtn = e.target.closest('[data-submit-done]');
-    const editBtn = e.target.closest('[data-edit]');
-    const delBtn = e.target.closest('[data-del]');
-    if (doneBtn) openSubmitDone(Number(doneBtn.dataset.submitDone));
-    if (editBtn) openEdit(Number(editBtn.dataset.edit));
-    if (delBtn) deletePost(Number(delBtn.dataset.del));
-  });
+  function bindList(selector) {
+    const list = $(selector);
+    list.addEventListener('submit', (e) => {
+      const form = e.target.closest('.comment-form');
+      if (form) submitComment(e);
+    });
+    list.addEventListener('click', (e) => {
+      if (e.target.closest('.reply-badge')) { clearReply(); return; }
+      const doneBtn = e.target.closest('[data-submit-done]');
+      const editBtn = e.target.closest('[data-edit]');
+      const delBtn = e.target.closest('[data-del]');
+      const likeEl = e.target.closest('[data-like]');
+      const replyBtn = e.target.closest('[data-reply-btn]');
+      const copyBtn = e.target.closest('[data-copy-repo]');
+      if (doneBtn) openSubmitDone(Number(doneBtn.dataset.submitDone));
+      if (editBtn) openEdit(Number(editBtn.dataset.edit));
+      if (delBtn) deletePost(Number(delBtn.dataset.del));
+      if (likeEl) toggleLike(Number(likeEl.dataset.like), likeEl);
+      if (copyBtn) copyRepo(Number(copyBtn.dataset.copyRepo));
+      if (replyBtn) {
+        const postEl = e.target.closest('.post');
+        const pid = Number(postEl.dataset.pid);
+        const cid = Number(replyBtn.dataset.replyBtn);
+        const p = state.posts.find((x) => x.id === pid);
+        const c = p && p.comments ? p.comments.find((x) => x.id === cid) : null;
+        if (c) setReply(pid, cid, c.name);
+      }
+    });
+  }
 
-  $('#done-list').addEventListener('click', (e) => {
-    const editBtn = e.target.closest('[data-edit]');
-    const delBtn = e.target.closest('[data-del]');
-    if (editBtn) openEdit(Number(editBtn.dataset.edit));
-    if (delBtn) deletePost(Number(delBtn.dataset.del));
-  });
+  bindList('#need-list');
+  bindList('#done-list');
 
+  renderNameUI();
+  checkMe();
   loadPosts();
+  loadWall();
 })();

@@ -2,7 +2,7 @@
 """Hana 插件需求墙 - 单文件服务（仅用 Python 标准库，无第三方依赖）
 
 - 静态页面：static/ 目录
-- 数据存储：data.json（同目录，自动创建）
+- 数据存储：data.json / logs.json / likes.json / wall.json（默认同目录，可用 HANA_WALL_DATA_DIR 指定目录）
 - 端口：默认 3000，可用环境变量 PORT 覆盖
 """
 
@@ -18,7 +18,12 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DATA_FILE = os.path.join(BASE_DIR, "data.json")
+DATA_DIR = os.environ.get("HANA_WALL_DATA_DIR", BASE_DIR)
+DATA_FILE = os.path.join(DATA_DIR, "data.json")
+LOGS_FILE = os.path.join(DATA_DIR, "logs.json")
+LIKES_FILE = os.path.join(DATA_DIR, "likes.json")
+WALL_FILE = os.path.join(DATA_DIR, "wall.json")
+VISITORS_FILE = os.path.join(DATA_DIR, "visitors.json")
 STATIC_DIR = os.path.join(BASE_DIR, "static")
 SECRET_FILE = os.path.join(BASE_DIR, "secret.txt")
 
@@ -40,7 +45,13 @@ MAX_LEN = {
     "password": 100,
     "token": 100,
     "comment": 200,
+    "fp": 64,
+    "wall_content": 500,
+    "wall_name": 50,
 }
+
+MAX_LOG = 500  # 操作日志最多保留条数
+MAX_VISITORS = 1000  # 游客账号最多保留数（超出删最早）
 
 CONTENT_TYPES = {
     ".html": "text/html; charset=utf-8",
@@ -73,6 +84,33 @@ def check_token(token):
     return bool(token) and token in TOKENS
 
 
+def check_visitor(token):
+    """校验游客令牌，有效返回昵称，无效返回 None"""
+    if not token:
+        return None
+    visitors = load_json(VISITORS_FILE, {})
+    info = visitors.get(token)
+    return info.get("name") if info else None
+
+
+def get_visitor(token):
+    """校验游客令牌，有效返回记录 dict（含 fp/name），无效返回 None"""
+    if not token:
+        return None
+    visitors = load_json(VISITORS_FILE, {})
+    return visitors.get(token) or None
+
+
+def visitor_name_map():
+    """设备指纹 -> 最新昵称 的映射（用于显示时归一化）"""
+    visitors = load_json(VISITORS_FILE, {})
+    m = {}
+    for info in visitors.values():
+        if info.get("fp"):
+            m[info["fp"]] = info.get("name", "")
+    return m
+
+
 def load_posts():
     if not os.path.exists(DATA_FILE):
         return []
@@ -88,6 +126,36 @@ def save_posts(posts):
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(posts, f, ensure_ascii=False, indent=2)
     os.replace(tmp, DATA_FILE)
+
+
+def load_json(path, default):
+    if not os.path.exists(path):
+        return default
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return default
+
+
+def save_json(path, data):
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, path)
+
+
+def append_log(action, post_id, title, detail):
+    """记录一条操作日志（最新在前，最多保留 MAX_LOG 条）"""
+    logs = load_json(LOGS_FILE, [])
+    logs.insert(0, {
+        "time": now_str(),
+        "action": action,
+        "post_id": post_id,
+        "title": title,
+        "detail": detail,
+    })
+    save_json(LOGS_FILE, logs[:MAX_LOG])
 
 
 def clean_text(s, key):
@@ -165,17 +233,22 @@ def make_post(data):
 
 class Handler(BaseHTTPRequestHandler):
     server_version = "HanaWall/1.0"
+    protocol_version = "HTTP/1.1"
 
     def log_message(self, fmt, *args):
         pass
 
-    def _send(self, code, body, ctype="application/json; charset=utf-8"):
+    def _send(self, code, body, ctype="application/json; charset=utf-8", cache=False):
         if isinstance(body, (dict, list)):
             body = json.dumps(body, ensure_ascii=False).encode("utf-8")
         elif isinstance(body, str):
             body = body.encode("utf-8")
         self.send_response(code)
         self.send_header("Content-Type", ctype)
+        if cache:
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Pragma", "no-cache")
+            self.send_header("Expires", "0")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
@@ -190,12 +263,62 @@ class Handler(BaseHTTPRequestHandler):
             return None
 
     def do_GET(self):
-        path = urlparse(self.path).path
+        url = urlparse(self.path)
+        path = url.path
+        params = {}
+        for pair in url.query.split("&"):
+            if "=" in pair:
+                k, _, v = pair.partition("=")
+                params[k] = v
         if path == "/api/posts":
+            fp = params.get("fp", "")
+            if not re.fullmatch(r"[0-9a-f]{8,64}", fp):
+                fp = ""
             with LOCK:
                 posts = load_posts()
+                likes = load_json(LIKES_FILE, {})
+                vmap = visitor_name_map()
             posts.sort(key=lambda p: p.get("id", 0), reverse=True)
+            for p in posts:
+                arr = likes.get(str(p.get("id")), [])
+                arr = [x if isinstance(x, dict) else {"fp": x, "name": ""} for x in arr]
+                p["like_count"] = len(arr)
+                p["liked"] = bool(fp and any(x["fp"] == fp for x in arr))
+                names = []
+                for x in arr:
+                    fp2 = x.get("fp", "")
+                    names.append(vmap.get(fp2) or x.get("name") or "匿名")
+                p["like_names"] = names
+                for c in p.get("comments", []):
+                    fp2 = c.get("fp")
+                    if fp2 and fp2 in vmap:
+                        c["name"] = vmap[fp2]
             self._send(200, {"ok": True, "posts": posts})
+            return
+        if path == "/api/wall":
+            with LOCK:
+                wall = load_json(WALL_FILE, [])
+                vmap = visitor_name_map()
+            wall.sort(key=lambda m: m.get("id", 0), reverse=True)
+            for m in wall:
+                fp2 = m.get("fp")
+                if fp2 and fp2 in vmap:
+                    m["name"] = vmap[fp2]
+            self._send(200, {"ok": True, "wall": wall})
+            return
+        if path == "/api/admin/logs":
+            if not check_token(params.get("token", "")):
+                self._send(401, {"ok": False, "error": "未登录或登录已过期"})
+                return
+            logs = load_json(LOGS_FILE, [])
+            self._send(200, {"ok": True, "logs": logs})
+            return
+        if path == "/api/visitor/me":
+            name = check_visitor(params.get("token", ""))
+            if not name:
+                self._send(401, {"ok": False, "error": "未登录"})
+                return
+            self._send(200, {"ok": True, "name": name})
             return
         if path in ("/", "/index.html", "/favicon.svg"):
             rel = "index.html"
@@ -210,7 +333,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         ctype = CONTENT_TYPES.get(os.path.splitext(fpath)[1], "application/octet-stream")
         with open(fpath, "rb") as f:
-            self._send(200, f.read(), ctype)
+            self._send(200, f.read(), ctype, cache=True)
 
     def do_POST(self):
         path = urlparse(self.path).path
@@ -229,6 +352,34 @@ class Handler(BaseHTTPRequestHandler):
                     self._send(200, {"ok": True, "token": token})
                 else:
                     self._send(403, {"ok": False, "error": "口令错误"})
+                return
+            if path == "/api/visitor/login":
+                name = clean_text(data.get("name", ""), "name")
+                if not name:
+                    self._send(400, {"ok": False, "error": "请填写昵称"})
+                    return
+                fp = clean_text(data.get("fp", ""), "fp")
+                if not re.fullmatch(r"[0-9a-f]{8,64}", fp):
+                    self._send(400, {"ok": False, "error": "设备标识无效"})
+                    return
+                visitors = load_json(VISITORS_FILE, {})
+                for t in [t for t, info in visitors.items() if info.get("fp") == fp]:
+                    del visitors[t]
+                token = secrets.token_hex(16)
+                visitors[token] = {"fp": fp, "name": name, "created_at": now_str()}
+                if len(visitors) > MAX_VISITORS:
+                    for t in sorted(visitors, key=lambda t: visitors[t].get("created_at", ""))[:len(visitors) - MAX_VISITORS]:
+                        del visitors[t]
+                save_json(VISITORS_FILE, visitors)
+                self._send(200, {"ok": True, "token": token, "name": name})
+                return
+            if path == "/api/visitor/logout":
+                visitors = load_json(VISITORS_FILE, {})
+                token = clean_text(data.get("token", ""), "token")
+                if token in visitors:
+                    del visitors[token]
+                    save_json(VISITORS_FILE, visitors)
+                self._send(200, {"ok": True})
                 return
             m = re.match(r"^/api/admin/posts/(\d+)/edit$", path)
             if m:
@@ -267,11 +418,23 @@ class Handler(BaseHTTPRequestHandler):
                     except (TypeError, ValueError):
                         reply_to = post.get("reply_to")
                     post["reply_to"] = reply_to
+                old = {k: post.get(k, "") for k in ("title", "content", "author", "contact", "github")}
                 post["title"] = title
                 post["content"] = content
                 if author:
                     post["author"] = author
                 post["contact"] = contact
+                changes = []
+                labels = {"title": "标题", "content": "内容", "author": "昵称", "contact": "联系方式", "github": "仓库"}
+                for k, label in labels.items():
+                    if old[k] != post.get(k, ""):
+                        if k == "content":
+                            changes.append("内容已修改")
+                        elif k == "title":
+                            changes.append(f"标题「{old[k]}」→「{post[k]}」")
+                        else:
+                            changes.append(f"{label}「{old[k]}」→「{post[k]}」")
+                append_log("edit", pid, post["title"], "；".join(changes) or "无字段变化")
                 save_posts(posts)
                 self._send(200, {"ok": True, "post": post})
                 return
@@ -290,6 +453,12 @@ class Handler(BaseHTTPRequestHandler):
                     for p in posts:
                         if p.get("reply_to") == pid:
                             p["reply_to"] = None
+                who = post.get("author") or "匿名"
+                content = post.get("content", "")
+                if len(content) > 60:
+                    content = content[:60] + "……"
+                append_log("delete", pid, post.get("title", ""),
+                           f"删除卡片（作者：{who}）内容：{content}")
                 save_posts(posts)
                 self._send(200, {"ok": True})
                 return
@@ -303,6 +472,70 @@ class Handler(BaseHTTPRequestHandler):
                 save_posts(posts)
                 self._send(200, {"ok": True, "post": post})
                 return
+            m = re.match(r"^/api/posts/(\d+)/like$", path)
+            if m:
+                pid = int(m.group(1))
+                post = next((p for p in posts if p["id"] == pid), None)
+                if post is None:
+                    self._send(404, {"ok": False, "error": "帖子不存在"})
+                    return
+                fp = clean_text(data.get("fp", ""), "fp")
+                if not re.fullmatch(r"[0-9a-f]{8,64}", fp):
+                    self._send(400, {"ok": False, "error": "设备标识无效"})
+                    return
+                name = check_visitor(clean_text(data.get("token", ""), "token"))
+                if not name:
+                    self._send(401, {"ok": False, "error": "请先设置昵称再点赞"})
+                    return
+                likes = load_json(LIKES_FILE, {})
+                key = str(pid)
+                arr = [x if isinstance(x, dict) else {"fp": x, "name": ""} for x in likes.setdefault(key, [])]
+                idx = next((i for i, x in enumerate(arr) if x["fp"] == fp), None)
+                if idx is not None:
+                    arr.pop(idx)
+                    liked = False
+                else:
+                    arr.append({"fp": fp, "name": name})
+                    liked = True
+                if not arr:
+                    del likes[key]
+                else:
+                    likes[key] = arr
+                save_json(LIKES_FILE, likes)
+                self._send(200, {"ok": True, "liked": liked, "count": len(arr),
+                                 "like_names": [x["name"] or "匿名" for x in arr]})
+                return
+            if path == "/api/wall":
+                visitor = get_visitor(clean_text(data.get("token", ""), "token"))
+                if not visitor:
+                    self._send(401, {"ok": False, "error": "请先设置昵称再留言"})
+                    return
+                name = visitor["name"]
+                fp = visitor.get("fp", "")
+                content = clean_text(data.get("content", ""), "wall_content")
+                if not content:
+                    self._send(400, {"ok": False, "error": "留言内容不能为空"})
+                    return
+                try:
+                    reply_to = int(data.get("reply_to")) if data.get("reply_to") not in (None, "") else None
+                except (TypeError, ValueError):
+                    reply_to = None
+                wall = load_json(WALL_FILE, [])
+                if reply_to is not None and not any(m.get("id") == reply_to for m in wall):
+                    self._send(400, {"ok": False, "error": "回复的留言不存在"})
+                    return
+                mid = max((m.get("id", 0) for m in wall), default=0) + 1
+                wall.append({
+                    "id": mid,
+                    "name": name,
+                    "fp": fp,
+                    "content": content,
+                    "reply_to": reply_to,
+                    "created_at": now_str(),
+                })
+                save_json(WALL_FILE, wall)
+                self._send(200, {"ok": True, "message": wall[-1]})
+                return
             m = re.match(r"^/api/posts/(\d+)/comments$", path)
             if m:
                 pid = int(m.group(1))
@@ -310,14 +543,31 @@ class Handler(BaseHTTPRequestHandler):
                 if post is None:
                     self._send(404, {"ok": False, "error": "帖子不存在"})
                     return
-                name = clean_text(data.get("name", ""), "name") or "匿名"
+                visitor = get_visitor(clean_text(data.get("token", ""), "token"))
+                if not visitor:
+                    self._send(401, {"ok": False, "error": "请先设置昵称再留言"})
+                    return
+                name = visitor["name"]
+                fp = visitor.get("fp", "")
                 content = clean_text(data.get("content", ""), "comment")
                 if not content:
                     self._send(400, {"ok": False, "error": "留言内容不能为空"})
                     return
-                post.setdefault("comments", []).append({
+                try:
+                    reply_to = int(data.get("reply_to")) if data.get("reply_to") not in (None, "") else None
+                except (TypeError, ValueError):
+                    reply_to = None
+                comments = post.setdefault("comments", [])
+                if reply_to is not None and not any(c.get("id") == reply_to for c in comments):
+                    self._send(400, {"ok": False, "error": "回复的留言不存在"})
+                    return
+                cid = max((c.get("id", 0) for c in comments), default=0) + 1
+                comments.append({
+                    "id": cid,
                     "name": name,
+                    "fp": fp,
                     "content": content,
+                    "reply_to": reply_to,
                     "created_at": now_str(),
                 })
                 save_posts(posts)
@@ -327,6 +577,7 @@ class Handler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
+    os.makedirs(DATA_DIR, exist_ok=True)
     port = int(os.environ.get("PORT", "3000"))
     print(f"Hana 插件需求墙已启动：http://0.0.0.0:{port}（数据文件：{DATA_FILE}）")
     ThreadingHTTPServer(("0.0.0.0", port), Handler).serve_forever()
