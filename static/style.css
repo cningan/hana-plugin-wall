@@ -134,6 +134,58 @@ h1 {
 /* ---------- layout ---------- */
 main { max-width: 1080px; margin: 0 auto; padding: 24px; }
 
+/* ---------- 公告横幅 ---------- */
+.announcement-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: linear-gradient(90deg, #fdf3e3, #f9e8cd);
+  border: 1px solid #ecd9b8;
+  border-radius: var(--radius);
+  padding: 10px 16px;
+  margin-bottom: 16px;
+  font-size: 13.5px;
+  color: #7a5b2e;
+  box-shadow: var(--shadow);
+}
+
+.announcement-icon { font-size: 16px; flex-shrink: 0; }
+.announcement-text { flex: 1; word-break: break-word; }
+
+.announcement-edit {
+  border: 1px solid #d9b87e;
+  background: #fffdf7;
+  color: #8a6a35;
+  font-size: 12px;
+  font-family: inherit;
+  padding: 4px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.announcement-edit:hover { background: #f6e7cc; }
+
+/* ---------- 需求状态标签 ---------- */
+.status-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 1px 8px;
+  border-radius: 99px;
+  flex-shrink: 0;
+  vertical-align: middle;
+}
+
+.status-tag.doing { background: #e7eee1; color: #55703f; }
+.status-tag.done { background: #ece8e1; color: #8d8678; }
+
+.claim-btn { flex-shrink: 0; }
+.claim-btn.claimed { background: #f6e2de; color: #b0453a; border-color: #e0b9b2; }
+.claim-btn.claimed:hover { background: #f0d2cc; }
+
 /* ---------- tabs ---------- */
 .tabs {
   display: flex;

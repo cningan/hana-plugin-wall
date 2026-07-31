@@ -25,6 +25,7 @@ LIKES_FILE = os.path.join(DATA_DIR, "likes.json")
 WALL_FILE = os.path.join(DATA_DIR, "wall.json")
 VISITORS_FILE = os.path.join(DATA_DIR, "visitors.json")
 ADMINS_FILE = os.path.join(DATA_DIR, "admins.json")
+ANNOUNCEMENT_FILE = os.path.join(DATA_DIR, "announcement.json")
 STATIC_DIR = os.path.join(BASE_DIR, "static")
 SECRET_FILE = os.path.join(BASE_DIR, "secret.txt")
 
@@ -49,6 +50,7 @@ MAX_LEN = {
     "fp": 64,
     "wall_content": 500,
     "wall_name": 50,
+    "announcement": 500,
 }
 
 MAX_LOG = 500  # 操作日志最多保留条数
@@ -339,6 +341,10 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self._send(200, {"ok": True})
             return
+        if path == "/api/announcement":
+            ann = load_json(ANNOUNCEMENT_FILE, None)
+            self._send(200, {"ok": True, "announcement": ann})
+            return
         if path == "/api/visitor/me":
             name = check_visitor(params.get("token", ""))
             if not name:
@@ -503,6 +509,48 @@ class Handler(BaseHTTPRequestHandler):
                            f"删除卡片（作者：{who}）内容：{content}")
                 save_posts(posts)
                 self._send(200, {"ok": True})
+                return
+            if path == "/api/admin/announcement":
+                if not check_token(clean_text(data.get("token", ""), "token")):
+                    self._send(401, {"ok": False, "error": "未登录或登录已过期"})
+                    return
+                content = clean_text(data.get("content", ""), "announcement")
+                if content:
+                    ann = {"content": content, "updated_at": now_str()}
+                    save_json(ANNOUNCEMENT_FILE, ann)
+                else:
+                    ann = None
+                    if os.path.exists(ANNOUNCEMENT_FILE):
+                        os.remove(ANNOUNCEMENT_FILE)
+                self._send(200, {"ok": True, "announcement": ann})
+                return
+            m = re.match(r"^/api/posts/(\d+)/claim$", path)
+            if m:
+                pid = int(m.group(1))
+                post = next((p for p in posts if p["id"] == pid), None)
+                if post is None:
+                    self._send(404, {"ok": False, "error": "帖子不存在"})
+                    return
+                if post["type"] != "need":
+                    self._send(400, {"ok": False, "error": "只有需求可以认领"})
+                    return
+                visitor = get_visitor(clean_text(data.get("token", ""), "token"))
+                if not visitor:
+                    self._send(401, {"ok": False, "error": "请先设置昵称再认领"})
+                    return
+                fp = visitor.get("fp", "")
+                claim = post.get("claim")
+                if claim:
+                    if claim.get("fp") != fp:
+                        self._send(403, {"ok": False, "error": f"该需求已被 {claim.get('name', '')} 认领"})
+                        return
+                    post["claim"] = None
+                    save_posts(posts)
+                    self._send(200, {"ok": True, "claim": None})
+                else:
+                    post["claim"] = {"name": visitor["name"], "fp": fp, "time": now_str()}
+                    save_posts(posts)
+                    self._send(200, {"ok": True, "claim": post["claim"]})
                 return
             if path == "/api/posts":
                 post, err = make_post(data)

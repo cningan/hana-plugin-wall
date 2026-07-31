@@ -17,6 +17,7 @@
     sortNeed: 'time',
     sortDone: 'time',
     query: '',
+    announcement: null,
   };
 
   const $ = (sel) => document.querySelector(sel);
@@ -142,6 +143,32 @@
     }
   }
 
+  async function loadAnnouncement() {
+    try {
+      const res = await api('/api/announcement');
+      if (res.ok) {
+        state.announcement = res.announcement || null;
+        renderAnnouncement();
+      }
+    } catch (e) { /* 忽略 */ }
+  }
+
+  function renderAnnouncement() {
+    const bar = $('#announcement-bar');
+    if (!state.announcement || !state.announcement.content) {
+      bar.classList.add('hidden');
+      return;
+    }
+    $('#announcement-text').textContent = state.announcement.content;
+    bar.classList.remove('hidden');
+  }
+
+  function needStatus(post) {
+    if (state.posts.some((p) => p.type === 'done' && p.reply_to === post.id)) return 'done';
+    if (post.claim) return 'doing';
+    return 'open';
+  }
+
   function adminBar(post) {
     if (!state.adminMode) return '';
     return `
@@ -205,14 +232,22 @@
       </div>`;
   }
 
-  function cardMeta(post) {
+  function cardMeta(post, extraHtml) {
     const date = String(post.created_at || '').slice(0, 10);
     return `
       <div class="card-meta">
         <span class="author">🧑 ${esc(authorName(post))}</span>
         <span class="spacer"></span>
+        ${extraHtml || ''}
         <span>${esc(date)}</span>
       </div>`;
+  }
+
+  function needStatusTag(post) {
+    const st = needStatus(post);
+    if (st === 'done') return '<span class="status-tag done">✅ 已完成</span>';
+    if (st === 'doing') return '<span class="status-tag doing">🔨 ' + esc(post.claim.name) + ' 在做</span>';
+    return '';
   }
 
   function needCard(post) {
@@ -220,7 +255,7 @@
       <article class="card need" data-open-detail="${post.id}">
         <h3 class="card-title">${esc(post.title)}</h3>
         <p class="card-excerpt">${esc(post.content)}</p>
-        ${cardMeta(post)}
+        ${cardMeta(post, needStatusTag(post))}
         <div class="card-foot">
           <span class="card-count">💬 ${(post.comments || []).length}</span>
           ${likeBtn(post, true)}
@@ -251,6 +286,21 @@
       <div class="reply-box">
         📋 响应需求 #${replyTo.id}「<span class="reply-need">${esc(replyTo.title)}</span>」
       </div>` : '';
+    let statusHtml = '';
+    let claimBtn = '';
+    if (!isDone) {
+      const st = needStatus(post);
+      if (st === 'done') {
+        const donePost = state.posts.find((p) => p.type === 'done' && p.reply_to === post.id);
+        statusHtml = `<div class="reply-box">✅ 已完成，由成果「<span class="reply-need">${donePost ? esc(donePost.title) : ''}</span>」回应</div>`;
+      } else if (st === 'doing') {
+        const mine = post.claim && post.claim.fp === state.fp;
+        statusHtml = `<div class="reply-box">🔨 认领中：<span class="reply-need">${esc(post.claim.name)}</span> 正在做（${esc(post.claim.time)}）</div>`;
+        if (mine) claimBtn = `<button class="btn claim-btn claimed" data-claim="${post.id}">🙋 取消认领</button>`;
+      } else {
+        claimBtn = `<button class="btn btn-primary claim-btn" data-claim="${post.id}">🙋 我要做</button>`;
+      }
+    }
     const head = isDone ? `
       <div class="post-head">
         <h3 class="post-title">${esc(post.title)}</h3>
@@ -261,6 +311,7 @@
         <h3 class="post-title">${esc(post.title)}</h3>
       </div>`;
     const actions = isDone ? '<span class="action-spacer"></span>' : `
+      ${claimBtn}
       <button class="btn btn-primary" data-submit-done="${post.id}">📤 提交成果</button>
       <span class="action-spacer"></span>`;
     $('#detail-body').innerHTML = `
@@ -273,6 +324,7 @@
           ${post.contact ? `<span>📮 ${esc(post.contact)}</span>` : ''}
           <span>🕐 ${esc(post.created_at)}</span>
         </div>
+        ${statusHtml}
         ${replyHtml}
         ${commentAreaHtml(post)}
         <div class="post-actions">
@@ -284,7 +336,7 @@
     openModal('modal-detail');
   }
 
-  function filterAndSort(list, sortKey) {
+  function filterAndSort(list, sortKey, statusFn) {
     let out = list;
     const q = state.query.trim().toLowerCase();
     if (q) {
@@ -298,17 +350,19 @@
     } else if (sortKey === 'comments') {
       out.sort((a, b) => (b.comments || []).length - (a.comments || []).length);
     } else {
-      out.sort((a, b) => b.id - a.id);
+      out.sort((a, b) => {
+        const sa = statusFn ? statusFn(a) : 'open';
+        const sb = statusFn ? statusFn(b) : 'open';
+        if ((sa === 'done') !== (sb === 'done')) return sa === 'done' ? 1 : -1;
+        return b.id - a.id;
+      });
     }
     return out;
   }
 
   function render() {
-    const repliedIds = new Set(
-      state.posts.filter((p) => p.type === 'done' && p.reply_to).map((p) => p.reply_to));
-
     const needs = filterAndSort(
-      state.posts.filter((p) => p.type === 'need' && !repliedIds.has(p.id)), state.sortNeed);
+      state.posts.filter((p) => p.type === 'need'), state.sortNeed, needStatus);
     const dones = filterAndSort(
       state.posts.filter((p) => p.type === 'done'), state.sortDone);
 
@@ -626,6 +680,48 @@
     $('#f-title').focus();
   }
 
+  /* ---------- 认领 ---------- */
+
+  async function toggleClaim(pid) {
+    if (!requireLogin()) return;
+    try {
+      const res = await api(`/api/posts/${pid}/claim`, { token: state.vtoken });
+      if (!res.ok) throw new Error(res.error);
+      const post = state.posts.find((p) => p.id === pid);
+      if (post) post.claim = res.claim;
+      render();
+      toast(res.claim ? '已认领 🔨 加油！' : '已取消认领');
+    } catch (err) {
+      toast('操作失败：' + err.message);
+    }
+  }
+
+  /* ---------- 公告 ---------- */
+
+  function openAnnouncementModal() {
+    $('#ann-content').value = state.announcement ? state.announcement.content : '';
+    openModal('modal-announcement');
+    $('#ann-content').focus();
+  }
+
+  async function submitAnnouncement(e) {
+    e.preventDefault();
+    const btn = $('#form-announcement button[type="submit"]');
+    btn.disabled = true;
+    try {
+      const res = await api('/api/admin/announcement', { token: state.token, content: $('#ann-content').value.trim() });
+      if (!res.ok) throw new Error(res.error);
+      state.announcement = res.announcement || null;
+      renderAnnouncement();
+      closeModal('modal-announcement');
+      toast(res.announcement ? '公告已发布 📢' : '公告已清除');
+    } catch (err) {
+      toast('保存失败：' + err.message);
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
   /* ---------- 复制仓库名 ---------- */
 
   async function copyRepo(id) {
@@ -657,9 +753,11 @@
     const link = $('#btn-admin');
     const logsBtn = $('#btn-logs');
     const badge = $('#admin-badge');
+    const annEdit = $('#btn-edit-announcement');
     const managing = state.adminMode;
     if (logsBtn) logsBtn.classList.toggle('hidden', !managing);
     if (badge) badge.classList.toggle('hidden', !managing);
+    if (annEdit) annEdit.classList.toggle('hidden', !managing);
     if (link) link.textContent = managing ? '⚙ 退出管理' : '⚙ 管理';
   }
 
@@ -856,6 +954,8 @@
     e.preventDefault();
     openLogs();
   });
+  on('#btn-edit-announcement', 'click', openAnnouncementModal);
+  on('#form-announcement', 'submit', submitAnnouncement);
   on('#admin-badge', 'click', (e) => {
     e.preventDefault();
     logoutAdmin();
@@ -901,6 +1001,8 @@
       const replyBtn = e.target.closest('[data-reply-btn]');
       const copyBtn = e.target.closest('[data-copy-repo]');
       if (doneBtn) { openSubmitDone(Number(doneBtn.dataset.submitDone)); return; }
+      const claimEl = e.target.closest('[data-claim]');
+      if (claimEl) { toggleClaim(Number(claimEl.dataset.claim)); return; }
       if (editBtn) { openEdit(Number(editBtn.dataset.edit)); return; }
       if (delBtn) { deletePost(Number(delBtn.dataset.del)); return; }
       if (likeEl) { toggleLike(Number(likeEl.dataset.like)); return; }
@@ -926,6 +1028,7 @@
   renderNameUI();
   checkMe();
   checkAdminToken();
+  loadAnnouncement();
   loadPosts();
   loadWall();
 })();

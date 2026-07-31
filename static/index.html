@@ -28,6 +28,12 @@
 </header>
 
 <main>
+  <div id="announcement-bar" class="announcement-bar hidden">
+    <span class="announcement-icon">📢</span>
+    <span id="announcement-text" class="announcement-text"></span>
+    <button id="btn-edit-announcement" class="announcement-edit admin-entry hidden" title="编辑公告">✏ 编辑</button>
+  </div>
+
   <nav class="tabs">
     <button id="tab-home" class="tab active">🏠 需求 · 成果</button>
     <button id="tab-wall" class="tab">💬 留言板</button>
@@ -208,6 +214,23 @@
         <select id="e-reply"></select>
       </div>
       <button type="submit" class="btn btn-primary btn-block">保存修改</button>
+    </form>
+  </div>
+</div>
+
+<!-- 公告编辑弹窗（仅管理模式可见） -->
+<div id="modal-announcement" class="modal-mask hidden">
+  <div class="modal modal-small">
+    <div class="modal-head">
+      <h2>📢 编辑公告</h2>
+      <button class="btn-close" data-close="modal-announcement">✕</button>
+    </div>
+    <form id="form-announcement">
+      <div class="field">
+        <label for="ann-content">公告内容（留空保存 = 清除公告）</label>
+        <textarea id="ann-content" maxlength="500" rows="3" placeholder="例如：本周六晚 8 点群内需求评审会，欢迎来围观"></textarea>
+      </div>
+      <button type="submit" class="btn btn-primary btn-block">保存</button>
     </form>
   </div>
 </div>
