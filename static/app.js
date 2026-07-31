@@ -587,14 +587,12 @@
 
   function renderAdminLink() {
     const link = $('#btn-admin');
-    $('#btn-logs').classList.toggle('hidden', !state.token);
+    const logsBtn = $('#btn-logs');
     const badge = $('#admin-badge');
-    if (badge) badge.classList.toggle('hidden', !state.token);
-    if (state.token) {
-      link.textContent = '⚙ 管理模式中 · 退出';
-    } else {
-      link.textContent = '⚙ 管理';
-    }
+    const managing = state.token;
+    if (logsBtn) logsBtn.classList.toggle('hidden', !managing);
+    if (badge) badge.classList.toggle('hidden', !managing);
+    if (link) link.textContent = managing ? '⚙ 退出管理' : '⚙ 管理';
   }
 
   async function submitAdmin(e) {
@@ -749,6 +747,10 @@
   on('#btn-logs', 'click', (e) => {
     e.preventDefault();
     openLogs();
+  });
+  on('#admin-badge', 'click', (e) => {
+    e.preventDefault();
+    logoutAdmin();
   });
 
   document.querySelectorAll('.btn-close').forEach((b) =>
