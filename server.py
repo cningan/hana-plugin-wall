@@ -183,7 +183,9 @@ def clean_text(s, key):
 def normalize_github(s):
     s = (s or "").strip().strip("/")
     s = re.sub(r"^https?://github\.com/", "", s)
-    s = s.rstrip(".git").strip()
+    if s.endswith(".git"):
+        s = s[:-4]
+    s = s.strip()
     if not re.match(r"^[\w.-]+/[\w.-]+$", s):
         return ""
     return s
@@ -510,6 +512,23 @@ class Handler(BaseHTTPRequestHandler):
                 save_posts(posts)
                 self._send(200, {"ok": True})
                 return
+            m = re.match(r"^/api/admin/posts/(\d+)/sink$", path)
+            if m:
+                if not check_token(clean_text(data.get("token", ""), "token")):
+                    self._send(401, {"ok": False, "error": "未登录或登录已过期"})
+                    return
+                pid = int(m.group(1))
+                post = next((p for p in posts if p["id"] == pid), None)
+                if post is None:
+                    self._send(404, {"ok": False, "error": "帖子不存在"})
+                    return
+                sunk = bool(data.get("sunk"))
+                post["sunk"] = sunk
+                append_log("sink" if sunk else "unsink", pid, post.get("title", ""),
+                           "沉底" if sunk else "恢复显示")
+                save_posts(posts)
+                self._send(200, {"ok": True, "sunk": sunk})
+                return
             if path == "/api/admin/announcement":
                 if not check_token(clean_text(data.get("token", ""), "token")):
                     self._send(401, {"ok": False, "error": "未登录或登录已过期"})
@@ -553,10 +572,15 @@ class Handler(BaseHTTPRequestHandler):
                     self._send(200, {"ok": True, "claim": post["claim"]})
                 return
             if path == "/api/posts":
+                visitor = get_visitor(clean_text(data.get("token", ""), "token"))
+                if not visitor:
+                    self._send(401, {"ok": False, "error": "请先设置昵称再发布"})
+                    return
                 post, err = make_post(data)
                 if err:
                     self._send(400, {"ok": False, "error": err})
                     return
+                post["author"] = visitor["name"]
                 post["id"] = (posts[-1]["id"] + 1) if posts else 1
                 posts.append(post)
                 save_posts(posts)

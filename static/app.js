@@ -14,11 +14,16 @@
     vtoken: localStorage.getItem('hana_wall_vtoken') || '',
     reply: { pid: null, cid: null, name: '' },
     wallReply: { cid: null, name: '' },
-    sortNeed: 'time',
-    sortDone: 'time',
+    sortNeed: loadSort('hana_wall_sort_need'),
+    sortDone: loadSort('hana_wall_sort_done'),
     query: '',
     announcement: null,
   };
+
+  function loadSort(key) {
+    const v = localStorage.getItem(key);
+    return v === 'time' || v === 'likes' || v === 'comments' ? v : 'likes';
+  }
 
   const $ = (sel) => document.querySelector(sel);
 
@@ -117,6 +122,7 @@
     $('#view-wall').classList.toggle('hidden', v !== 'wall');
     $('#tab-home').classList.toggle('active', v === 'home');
     $('#tab-wall').classList.toggle('active', v === 'wall');
+    if (v === 'home') render();
   }
 
   /* ---------- 加载与渲染 ---------- */
@@ -160,6 +166,13 @@
     bar.classList.toggle('hidden', !has && !state.adminMode);
   }
 
+  function openAnnouncementView() {
+    if (!state.announcement || !state.announcement.content) return;
+    $('#ann-view-content').textContent = state.announcement.content;
+    $('#ann-view-time').textContent = '发布于 ' + (state.announcement.updated_at || '');
+    openModal('modal-ann-view');
+  }
+
   function needStatus(post) {
     if (state.posts.some((p) => p.type === 'done' && p.reply_to === post.id)) return 'done';
     if (post.claim) return 'doing';
@@ -168,8 +181,12 @@
 
   function adminBar(post) {
     if (!state.adminMode) return '';
+    const sinkBtn = post.sunk
+      ? `<button class="admin-btn" data-unsink="${post.id}" title="恢复显示，回到正常排序">⬆ 恢复</button>`
+      : `<button class="admin-btn" data-sink="${post.id}" title="沉底：不合理的卡片沉到最底部，带标识">⬇ 沉底</button>`;
     return `
       <div class="admin-bar">
+        ${sinkBtn}
         <button class="admin-btn" data-edit="${post.id}">✏ 编辑</button>
         <button class="admin-btn danger" data-del="${post.id}">🗑 删除</button>
       </div>`;
@@ -247,12 +264,16 @@
     return '';
   }
 
+  function sinkTag(post) {
+    return post.sunk ? '<span class="sink-tag">⬇ 已沉底</span>' : '';
+  }
+
   function needCard(post) {
     return `
-      <article class="card need" data-open-detail="${post.id}">
+      <article class="card need${post.sunk ? ' sunk' : ''}" data-open-detail="${post.id}">
         <h3 class="card-title">${esc(post.title)}</h3>
         <p class="card-excerpt">${esc(post.content)}</p>
-        ${cardMeta(post, needStatusTag(post))}
+        ${cardMeta(post, needStatusTag(post) + sinkTag(post))}
         <div class="card-foot">
           <span class="card-count">💬 ${(post.comments || []).length}</span>
           ${likeBtn(post, true)}
@@ -262,10 +283,10 @@
 
   function doneCard(post) {
     return `
-      <article class="card done" data-open-detail="${post.id}">
+      <article class="card done${post.sunk ? ' sunk' : ''}" data-open-detail="${post.id}">
         <h3 class="card-title">${esc(post.title)}</h3>
         <p class="card-excerpt">${esc(post.content)}</p>
-        ${cardMeta(post)}
+        ${cardMeta(post, sinkTag(post))}
         <div class="card-foot">
           <span class="card-count">💬 ${(post.comments || []).length}</span>
           ${likeBtn(post, true)}
@@ -307,12 +328,13 @@
       <div class="post-head">
         <h3 class="post-title">${esc(post.title)}</h3>
       </div>`;
+    const sunkHtml = post.sunk ? '<div class="reply-box sink-box">⬇ 该卡片已被管理员沉底，内容仅供参考</div>' : '';
     const actions = isDone ? '<span class="action-spacer"></span>' : `
       ${claimBtn}
       <button class="btn btn-primary" data-submit-done="${post.id}">📤 提交成果</button>
       <span class="action-spacer"></span>`;
     $('#detail-body').innerHTML = `
-      <article class="post ${isDone ? 'done' : 'need'}" data-pid="${post.id}">
+      <article class="post ${isDone ? 'done' : 'need'}${post.sunk ? ' sunk' : ''}" data-pid="${post.id}">
         ${head}
         <p class="post-content">${esc(post.content)}</p>
         <div class="post-meta">
@@ -321,6 +343,7 @@
           ${post.contact ? `<span>📮 ${esc(post.contact)}</span>` : ''}
           <span>🕐 ${esc(post.created_at)}</span>
         </div>
+        ${sunkHtml}
         ${statusHtml}
         ${replyHtml}
         ${commentAreaHtml(post)}
@@ -354,7 +377,31 @@
         return b.id - a.id;
       });
     }
-    return out;
+    return out.filter((p) => !p.sunk).concat(out.filter((p) => p.sunk));
+  }
+
+  /* 瀑布流：最短列优先分配。每张卡放入当前更矮的那列（渲染后测量高度），
+     视觉上从页面顶部往下看，卡片大体按排名顺序出现；同水平左侧优先。 */
+  function fillList(listEl, cards, cardHtml) {
+    if (listEl.offsetParent === null) return;
+    listEl.innerHTML = '';
+    if (!cards.length) return;
+    const narrow = window.matchMedia && window.matchMedia('(max-width: 880px)').matches;
+    const cols = [];
+    for (let i = 0; i < (narrow ? 1 : 2); i++) {
+      const c = document.createElement('div');
+      c.className = 'masonry-col';
+      listEl.appendChild(c);
+      cols.push({ el: c, h: 0 });
+    }
+    for (const p of cards) {
+      const idx = cols.length === 1 ? 0 : (cols[0].h <= cols[1].h ? 0 : 1);
+      const wrap = document.createElement('div');
+      wrap.innerHTML = cardHtml(p);
+      const card = wrap.firstElementChild;
+      cols[idx].el.appendChild(card);
+      cols[idx].h += card.offsetHeight;
+    }
   }
 
   function render() {
@@ -366,8 +413,13 @@
     $('#count-need').textContent = needs.length;
     $('#count-done').textContent = dones.length;
 
-    $('#need-list').innerHTML = needs.map(needCard).join('');
-    $('#done-list').innerHTML = dones.map(doneCard).join('');
+    $('#sort-need').value = state.sortNeed;
+    $('#sort-done').value = state.sortDone;
+
+    if (state.view === 'home') {
+      fillList($('#need-list'), needs, needCard);
+      fillList($('#done-list'), dones, doneCard);
+    }
 
     const q = state.query.trim();
     $('#empty-need').textContent = q ? '没有找到匹配的需求' : '还没有需求，发一条让大家看看？';
@@ -417,13 +469,13 @@
   /* ---------- 游客昵称 / 登录 ---------- */
 
   function renderNameUI() {
-    $('#btn-name').textContent = '👤 ' + (state.me || '匿名');
+    $('#btn-name').textContent = '👤 ' + (state.me || '未登录');
     $('#btn-name-logout').classList.toggle('hidden', !state.vtoken);
   }
 
   function requireLogin() {
     if (state.vtoken) return true;
-    toast('请先点击右上角「👤 匿名」设置昵称，才能留言和点赞');
+    toast('请先点击右上角「👤 未登录」设置昵称，才能发布、留言和点赞');
     return false;
   }
 
@@ -544,12 +596,13 @@
 
   async function submitNew(e) {
     e.preventDefault();
+    if (!requireLogin()) return;
     const type = state.formType;
     const body = {
       type,
+      token: state.vtoken,
       title: $('#f-title').value.trim(),
       content: $('#f-content').value.trim(),
-      author: $('#f-author').value.trim(),
       contact: $('#f-contact').value.trim(),
     };
     if (type === 'done') {
@@ -672,6 +725,7 @@
   }
 
   function openSubmitDone(id) {
+    if (!requireLogin()) return;
     closeModal('modal-detail');
     resetNewForm('done', id);
     openModal('modal-new');
@@ -689,6 +743,24 @@
       if (post) post.claim = res.claim;
       render();
       toast(res.claim ? '已认领 🔨 加油！' : '已取消认领');
+    } catch (err) {
+      toast('操作失败：' + err.message);
+    }
+  }
+
+  /* ---------- 沉底 ---------- */
+
+  async function toggleSink(id, sunk) {
+    const post = state.posts.find((p) => p.id === id);
+    if (!post) return;
+    if (!confirm(sunk
+      ? `确定沉底这张卡片？\n「${post.title}」\n沉底后一直排在最后（任何排序/搜索都不影响），并显示标识。`
+      : `恢复这张卡片？\n「${post.title}」`)) return;
+    try {
+      const res = await api(`/api/admin/posts/${id}/sink`, { token: state.token, sunk });
+      if (!res.ok) throw new Error(res.error);
+      toast(sunk ? '已沉底 ⬇' : '已恢复 ⬆');
+      await loadPosts();
     } catch (err) {
       toast('操作失败：' + err.message);
     }
@@ -752,10 +824,12 @@
     const logsBtn = $('#btn-logs');
     const badge = $('#admin-badge');
     const annEdit = $('#btn-edit-announcement');
+    const changelogBtn = $('#btn-changelog');
     const managing = state.adminMode;
     if (logsBtn) logsBtn.classList.toggle('hidden', !managing);
     if (badge) badge.classList.toggle('hidden', !managing);
     if (annEdit) annEdit.classList.toggle('hidden', !managing);
+    if (changelogBtn) changelogBtn.classList.toggle('hidden', !state.vtoken);
     if (link) link.textContent = managing ? '⚙ 退出管理' : '⚙ 管理';
   }
 
@@ -825,7 +899,7 @@
         list.innerHTML = res.logs.map((l) => `
           <div class="log-item">
             <div class="log-head">
-              <span class="log-action ${esc(l.action)}">${l.action === 'edit' ? '✏ 编辑' : '🗑 删除'}</span>
+              <span class="log-action ${esc(l.action)}">${{ edit: '✏ 编辑', delete: '🗑 删除', sink: '⬇ 沉底', unsink: '⬆ 恢复' }[l.action] || esc(l.action)}</span>
               <b>#${l.post_id}「${esc(l.title)}」</b>
               <span class="comment-time">${esc(l.time)}</span>
             </div>
@@ -909,6 +983,24 @@
     }
   }
 
+  async function openChangelog() {
+    try {
+      const res = await fetch('/static/changelog.json');
+      const data = await res.json();
+      $('#changelog-list').innerHTML = (data.versions || []).map((v) => `
+        <div class="changelog-item">
+          <div class="changelog-head">
+            <b>${esc(v.version)}</b>
+            <span class="comment-time">${esc(v.date)}</span>
+          </div>
+          <ul>${(v.items || []).map((i) => `<li>${esc(i)}</li>`).join('')}</ul>
+        </div>`).join('');
+      openModal('modal-changelog');
+    } catch (err) {
+      toast('加载更新日志失败：' + err.message);
+    }
+  }
+
   /* ---------- 事件绑定 ---------- */
 
   function on(sel, evt, fn) {
@@ -925,10 +1017,12 @@
   });
   on('#sort-need', 'change', (e) => {
     state.sortNeed = e.target.value;
+    localStorage.setItem('hana_wall_sort_need', state.sortNeed);
     render();
   });
   on('#sort-done', 'change', (e) => {
     state.sortDone = e.target.value;
+    localStorage.setItem('hana_wall_sort_done', state.sortDone);
     render();
   });
 
@@ -942,8 +1036,16 @@
     loadPosts();
     loadWall();
   });
-  on('#btn-new-need', 'click', () => { resetNewForm('need'); openModal('modal-new'); });
-  on('#btn-new-done', 'click', () => { resetNewForm('done'); openModal('modal-new'); });
+  on('#btn-new-need', 'click', () => {
+    if (!requireLogin()) return;
+    resetNewForm('need');
+    openModal('modal-new');
+  });
+  on('#btn-new-done', 'click', () => {
+    if (!requireLogin()) return;
+    resetNewForm('done');
+    openModal('modal-new');
+  });
   on('#btn-admin', 'click', (e) => {
     e.preventDefault();
     toggleAdminMode();
@@ -952,7 +1054,18 @@
     e.preventDefault();
     openLogs();
   });
-  on('#btn-edit-announcement', 'click', openAnnouncementModal);
+  on('#btn-changelog', 'click', (e) => {
+    e.preventDefault();
+    openChangelog();
+  });
+  on('#btn-edit-announcement', 'click', (e) => {
+    e.stopPropagation();
+    openAnnouncementModal();
+  });
+  on('#announcement-bar', 'click', (e) => {
+    if (e.target.closest('#btn-edit-announcement')) return;
+    openAnnouncementView();
+  });
   on('#form-announcement', 'submit', submitAnnouncement);
   on('#admin-badge', 'click', (e) => {
     e.preventDefault();
@@ -995,6 +1108,8 @@
       const doneBtn = e.target.closest('[data-submit-done]');
       const editBtn = e.target.closest('[data-edit]');
       const delBtn = e.target.closest('[data-del]');
+      const sinkBtn = e.target.closest('[data-sink]');
+      const unsinkBtn = e.target.closest('[data-unsink]');
       const likeEl = e.target.closest('[data-like]');
       const replyBtn = e.target.closest('[data-reply-btn]');
       const copyBtn = e.target.closest('[data-copy-repo]');
@@ -1003,6 +1118,8 @@
       if (claimEl) { toggleClaim(Number(claimEl.dataset.claim)); return; }
       if (editBtn) { openEdit(Number(editBtn.dataset.edit)); return; }
       if (delBtn) { deletePost(Number(delBtn.dataset.del)); return; }
+      if (sinkBtn) { toggleSink(Number(sinkBtn.dataset.sink), true); return; }
+      if (unsinkBtn) { toggleSink(Number(unsinkBtn.dataset.unsink), false); return; }
       if (likeEl) { toggleLike(Number(likeEl.dataset.like)); return; }
       if (copyBtn) { copyRepo(Number(copyBtn.dataset.copyRepo)); return; }
       if (replyBtn) {

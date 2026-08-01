@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
@@ -21,6 +21,7 @@
     <div class="header-right">
       <span id="admin-badge" class="admin-badge hidden" title="点击退出管理模式">👑 管理员</span>
       <button id="btn-logs" class="btn btn-outline admin-entry hidden" title="查看操作日志">📜 日志</button>
+      <button id="btn-changelog" class="btn btn-outline admin-entry hidden" title="查看版本更新记录">🆕 更新日志</button>
       <button id="btn-admin" class="btn btn-outline admin-entry" title="进入管理模式">⚙ 管理</button>
       <button id="btn-name" class="btn btn-outline name-btn" title="设置昵称，留言和点赞会自动带上">👤 匿名</button>
     </div>
@@ -28,16 +29,18 @@
 </header>
 
 <main>
-  <div id="announcement-bar" class="announcement-bar hidden">
-    <span class="announcement-icon">📢</span>
-    <span id="announcement-text" class="announcement-text"></span>
-    <button id="btn-edit-announcement" class="announcement-edit admin-entry hidden" title="编辑公告">✏ 编辑</button>
-  </div>
+  <div class="top-row">
+    <nav class="tabs">
+      <button id="tab-home" class="tab active">🏠 需求 · 成果</button>
+      <button id="tab-wall" class="tab">💬 留言板</button>
+    </nav>
 
-  <nav class="tabs">
-    <button id="tab-home" class="tab active">🏠 需求 · 成果</button>
-    <button id="tab-wall" class="tab">💬 留言板</button>
-  </nav>
+    <div id="announcement-bar" class="announcement-bar hidden">
+      <span class="announcement-icon">📢</span>
+      <span id="announcement-text" class="announcement-text" title="点击查看完整公告"></span>
+      <button id="btn-edit-announcement" class="announcement-edit admin-entry hidden" title="编辑公告">✏ 编辑</button>
+    </div>
+  </div>
 
   <div class="search-bar">
     <input id="search-input" type="search" placeholder="🔍 搜索标题或内容…" autocomplete="off">
@@ -54,7 +57,7 @@
         <span class="spacer"></span>
         <select id="sort-need" class="sort-select" title="排序方式">
           <option value="time">🕐 最新</option>
-          <option value="likes">❤️ 点赞最多</option>
+          <option value="likes" selected>❤️ 点赞最多</option>
           <option value="comments">💬 评论最多</option>
         </select>
         <button id="btn-new-need" class="btn btn-primary">＋ 发布需求</button>
@@ -72,7 +75,7 @@
         <span class="spacer"></span>
         <select id="sort-done" class="sort-select" title="排序方式">
           <option value="time">🕐 最新</option>
-          <option value="likes">❤️ 点赞最多</option>
+          <option value="likes" selected>❤️ 点赞最多</option>
           <option value="comments">💬 评论最多</option>
         </select>
         <button id="btn-new-done" class="btn btn-primary">＋ 发布成果</button>
@@ -117,8 +120,8 @@
     <form id="form-new">
       <input type="hidden" id="f-type" value="need">
       <div class="field">
-        <label for="f-author">你的昵称（选填）</label>
-        <input id="f-author" type="text" maxlength="50" placeholder="不填就保持匿名">
+        <label>发布身份</label>
+        <p class="field-hint">以你的登录昵称发布（点右上角 👤 可修改昵称）</p>
       </div>
       <div class="field">
         <label for="f-contact">联系方式（选填）</label>
@@ -254,6 +257,29 @@
       <button class="btn-close" data-close="modal-logs">✕</button>
     </div>
     <div id="logs-list" class="logs-list"></div>
+  </div>
+</div>
+
+<!-- 公告详情弹窗 -->
+<div id="modal-ann-view" class="modal-mask hidden">
+  <div class="modal modal-small">
+    <div class="modal-head">
+      <h2>📢 公告详情</h2>
+      <button class="btn-close" data-close="modal-ann-view">✕</button>
+    </div>
+    <div id="ann-view-content" class="ann-view-content"></div>
+    <p id="ann-view-time" class="ann-view-time"></p>
+  </div>
+</div>
+
+<!-- 更新日志弹窗（登录可见） -->
+<div id="modal-changelog" class="modal-mask hidden">
+  <div class="modal modal-detail">
+    <div class="modal-head">
+      <h2>🆕 更新日志</h2>
+      <button class="btn-close" data-close="modal-changelog">✕</button>
+    </div>
+    <div id="changelog-list" class="changelog-list"></div>
   </div>
 </div>
 
