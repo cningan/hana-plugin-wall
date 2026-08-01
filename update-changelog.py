@@ -16,6 +16,9 @@ from datetime import datetime
 REPO = os.path.dirname(os.path.abspath(__file__))
 CFG = os.path.join(REPO, "static", "changelog.json")
 
+# 只有修改用户可见代码的提交才进更新日志（脚本/部署工具/changelog 自身改动跳过）
+USER_VISIBLE = {"server.py", "static/app.js", "static/index.html", "static/style.css"}
+
 
 def git(*args):
     r = subprocess.run(["git", "-C", REPO, *args],
@@ -39,7 +42,7 @@ def main():
     for line in logs.splitlines():
         h, _, msg = line.partition("|")
         files = set(git("show", "--format=", "--name-only", h).split())
-        if not files or files <= {"static/changelog.json"}:
+        if not files or not (files & USER_VISIBLE):
             continue
         entries.append(msg.strip() or h[:8])
 
