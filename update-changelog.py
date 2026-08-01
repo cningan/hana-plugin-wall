@@ -29,7 +29,7 @@ def git(*args):
 
 
 def main():
-    with open(CFG, encoding="utf-8") as f:
+    with open(CFG, encoding="utf-8-sig") as f:
         data = json.load(f)
     last = data.get("last_commit", "")
 
