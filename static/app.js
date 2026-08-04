@@ -33,6 +33,38 @@
     }[c]));
   }
 
+  /* 文本渲染：先转义防注入，再自动识别 http(s) 链接——
+     图片地址（.jpg/.png 等结尾）渲染成图片，其他渲染成可点击链接 */
+  function renderText(text, opts) {
+    const raw = String(text == null ? '' : text);
+    opts = opts || {};
+    const urlRe = /https?:\/\/[^\s<>"'()，。！？、；：（）【】《》*]+/g;
+    let out = '';
+    let last = 0;
+    let m;
+    while ((m = urlRe.exec(raw)) !== null) {
+      out += esc(raw.slice(last, m.index));
+      let url = m[0].replace(/[.,!?;:)\]}>]+$/, '');
+      if (url.length >= 7) {
+        out += urlToHtml(url, opts);
+      } else {
+        out += esc(m[0]);
+      }
+      last = m.index + m[0].length;
+    }
+    out += esc(raw.slice(last));
+    return out;
+  }
+
+  function urlToHtml(url, opts) {
+    const safe = esc(url);
+    if (!opts.noImages && /\.(jpe?g|png|gif|webp|bmp)(\/)?$/i.test(url.split(/[?#]/)[0])) {
+      return '<img class="embed-img" src="' + safe + '" alt="" loading="lazy" ' +
+             'referrerpolicy="no-referrer" onerror="this.style.display=\'none\'">';
+    }
+    return '<a href="' + safe + '" target="_blank" rel="noopener noreferrer">' + safe + '</a>';
+  }
+
   function authorName(post) {
     return post.author ? post.author : '匿名';
   }
@@ -212,7 +244,7 @@
         <b>${esc(c.name)}</b>${adminTag(c)}
         ${parent ? `<span class="comment-ref">回复 ${esc(parent.name)}</span>` : ''}
         <span class="comment-time">${esc(c.created_at)}</span>
-        <p>${esc(c.content)}</p>
+        <p>${renderText(c.content)}</p>
         <button type="button" class="comment-reply-btn" data-reply-btn="${c.id}">↩ 回复</button>
         ${kids.join('')}
       </div>`;
@@ -239,7 +271,7 @@
       <div class="comment-area" data-area="${post.id}">
         ${listHtml}
         <form class="comment-form" data-comment="${post.id}">
-          <input class="comment-text" maxlength="200" placeholder="留言：我来做 / 有想法…" required>
+          <input class="comment-text" maxlength="200" placeholder="留言：我来做 / 有想法…（贴图片链接自动显示）" required>
           <button class="btn-small" type="submit">留言</button>
         </form>
         <div class="reply-badge hidden"></div>
@@ -272,7 +304,7 @@
     return `
       <article class="card need${post.sunk ? ' sunk' : ''}" data-open-detail="${post.id}">
         <h3 class="card-title">${esc(post.title)}</h3>
-        <p class="card-excerpt">${esc(post.content)}</p>
+        <p class="card-excerpt">${renderText(post.content, { noImages: true })}</p>
         ${cardMeta(post, needStatusTag(post) + sinkTag(post))}
         <div class="card-foot">
           <span class="card-count">💬 ${(post.comments || []).length}</span>
@@ -285,7 +317,7 @@
     return `
       <article class="card done${post.sunk ? ' sunk' : ''}" data-open-detail="${post.id}">
         <h3 class="card-title">${esc(post.title)}</h3>
-        <p class="card-excerpt">${esc(post.content)}</p>
+        <p class="card-excerpt">${renderText(post.content, { noImages: true })}</p>
         ${cardMeta(post, sinkTag(post))}
         <div class="card-foot">
           <span class="card-count">💬 ${(post.comments || []).length}</span>
@@ -336,7 +368,7 @@
     $('#detail-body').innerHTML = `
       <article class="post ${isDone ? 'done' : 'need'}${post.sunk ? ' sunk' : ''}" data-pid="${post.id}">
         ${head}
-        <p class="post-content">${esc(post.content)}</p>
+        <p class="post-content">${renderText(post.content)}</p>
         <div class="post-meta">
           <span class="group">👥 ${esc(post.group)}</span>
           <span>🧑 ${esc(authorName(post))}</span>
@@ -451,7 +483,7 @@
         <b>${esc(m.name)}</b>${adminTag(m)}
         ${parent ? `<span class="comment-ref">回复 ${esc(parent.name)}</span>` : ''}
         <span class="comment-time">${esc(m.created_at)}</span>
-        <p>${esc(m.content)}</p>
+        <p>${renderText(m.content)}</p>
         <button type="button" class="comment-reply-btn" data-wall-reply="${m.id}">↩ 回复</button>
         ${kids}
       </div>`;
@@ -571,7 +603,7 @@
       : '详细说明 <b>*</b>';
     $('#f-content').placeholder = type === 'done'
       ? '留空则自动获取 GitHub 仓库描述'
-      : '功能、场景、使用方式……写清楚大家才好帮你';
+      : '功能、场景、使用方式……写清楚大家才好帮你（贴图片链接自动显示）';
     if (type === 'done') fillReplySelect();
   }
 
@@ -1104,6 +1136,7 @@
       if (form) submitComment(e);
     });
     list.addEventListener('click', (e) => {
+      if (e.target.closest('a, img')) return; // 链接/图片自带行为，不触发卡片
       if (e.target.closest('.reply-badge')) { clearReply(); return; }
       const doneBtn = e.target.closest('[data-submit-done]');
       const editBtn = e.target.closest('[data-edit]');
