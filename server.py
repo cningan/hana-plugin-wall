@@ -615,15 +615,29 @@ class Handler(BaseHTTPRequestHandler):
                     self._send(400, {"ok": False, "error": "设备标识无效"})
                     return
                 visitors = load_json(VISITORS_FILE, {})
-                for t in [t for t, info in visitors.items() if info.get("fp") == fp]:
-                    del visitors[t]
                 name_key = name.casefold()
+                # 同设备同名 → 自动登录：复用原 token，保留 is_admin/违规计数等身份信息
+                for t, info in visitors.items():
+                    if info.get("fp") == fp and str(info.get("name", "")).casefold() == name_key:
+                        self._send(200, {"ok": True, "token": t, "name": info.get("name", name)})
+                        return
+                # 不同设备同名 → 拒绝（防冒名）
                 for info in visitors.values():
                     if info.get("fp") != fp and str(info.get("name", "")).casefold() == name_key:
-                        self._send(409, {"ok": False, "error": "昵称已被占用，换一个吧"})
+                        self._send(409, {"ok": False, "error": "该昵称已被其他设备使用；如是你本人，请回到原设备登录"})
                         return
+                # 同设备改名 → 新身份，继承旧身份的 is_admin / 违规计数
+                old = {}
+                for t in [t for t, info in visitors.items() if info.get("fp") == fp]:
+                    old = visitors[t]
+                    del visitors[t]
                 token = secrets.token_hex(16)
-                visitors[token] = {"fp": fp, "name": name, "created_at": now_str()}
+                new_info = {"fp": fp, "name": name, "created_at": now_str()}
+                if old:
+                    new_info["is_admin"] = bool(old.get("is_admin"))
+                    if old.get("flags"):
+                        new_info["flags"] = old["flags"]
+                visitors[token] = new_info
                 if len(visitors) > MAX_VISITORS:
                     for t in sorted(visitors, key=lambda t: visitors[t].get("created_at", ""))[:len(visitors) - MAX_VISITORS]:
                         del visitors[t]

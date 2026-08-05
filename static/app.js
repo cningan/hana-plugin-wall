@@ -11,7 +11,7 @@
     view: 'home',
     fp: getFingerprint(),
     me: localStorage.getItem('hana_wall_me') || '',
-    vtoken: localStorage.getItem('hana_wall_vtoken') || '',
+    vtoken: localStorage.getItem('hana_wall_vtoken') || readCookie('hw_vt') || '',
     reply: { pid: null, cid: null, name: '' },
     wallReply: { cid: null, name: '' },
     sortNeed: loadSort('hana_wall_sort_need'),
@@ -20,6 +20,22 @@
     announcement: null,
     pendingCount: 0,
   };
+
+  /* 登录凭证双写：localStorage 优先，Cookie 兜底（部分清数据场景只清 localStorage，Cookie 可恢复） */
+  function readCookie(name) {
+    const m = document.cookie.match(new RegExp('(?:^|; )' + name + '=([^;]*)'));
+    return m ? decodeURIComponent(m[1]) : '';
+  }
+
+  function saveVtoken(vt) {
+    localStorage.setItem('hana_wall_vtoken', vt);
+    document.cookie = 'hw_vt=' + encodeURIComponent(vt) + '; max-age=31536000; path=/';
+  }
+
+  function clearVtoken() {
+    localStorage.removeItem('hana_wall_vtoken');
+    document.cookie = 'hw_vt=; max-age=0; path=/';
+  }
 
   function loadSort(key) {
     const v = localStorage.getItem(key);
@@ -661,11 +677,15 @@
       if (res.ok) {
         state.me = res.name;
         localStorage.setItem('hana_wall_me', res.name);
+        if (localStorage.getItem('hana_wall_vtoken') !== state.vtoken) {
+          saveVtoken(state.vtoken); // Cookie 里恢复的凭证回写 localStorage
+        }
       } else {
         state.vtoken = '';
         state.me = '';
-        localStorage.removeItem('hana_wall_vtoken');
+        clearVtoken();
         localStorage.removeItem('hana_wall_me');
+        toast('登录凭证已失效，请重新设置昵称 👤');
       }
     } catch (e) { /* 忽略网络错误 */ }
     renderNameUI();
@@ -699,7 +719,7 @@
         state.me = res.name;
         state.vtoken = res.token;
         localStorage.setItem('hana_wall_me', res.name);
-        localStorage.setItem('hana_wall_vtoken', res.token);
+        saveVtoken(res.token);
         toast('昵称已设置，现在可以留言和点赞了 👤');
       }
       closeModal('modal-name');
@@ -720,7 +740,7 @@
     state.me = '';
     state.vtoken = '';
     localStorage.removeItem('hana_wall_me');
-    localStorage.removeItem('hana_wall_vtoken');
+    clearVtoken();
     toast('已退出，恢复浏览模式');
   }
 
@@ -1472,9 +1492,9 @@
 
   on('#btn-name', 'click', openNameModal);
   on('#form-name', 'submit', saveName);
-  on('#btn-name-logout', 'click', (e) => {
+  on('#btn-name-logout', 'click', async (e) => {
     e.preventDefault();
-    logoutVisitor();
+    await logoutVisitor();
     closeModal('modal-name');
     renderNameUI();
     loadPosts();
