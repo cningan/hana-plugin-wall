@@ -29,6 +29,8 @@ def git(*args):
 
 
 def main():
+    if hasattr(sys.stdout, "reconfigure"):  # Windows 控制台 GBK 兜底，防 emoji 打印崩溃
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     with open(CFG, encoding="utf-8-sig") as f:
         data = json.load(f)
     last = data.get("last_commit", "")
