@@ -22,6 +22,7 @@
     announcement: null,
     pendingCount: 0,
     pendingItems: [],
+    adminUsers: [],
   };
 
   /* 登录凭证双写：localStorage 优先，Cookie 兜底（部分清数据场景只清 localStorage，Cookie 可恢复） */
@@ -1368,7 +1369,7 @@
         list.innerHTML = res.logs.map((l) => `
           <div class="log-item">
             <div class="log-head">
-              <span class="log-action ${esc(l.action)}">${{ edit: '✏ 编辑', delete: '🗑 删除', sink: '⬇ 沉底', unsink: '⬆ 恢复', hide: '⛔ 屏蔽', unhide: '↩ 解除屏蔽', review: '✅ 审核', trash: '🗑 回收站', restore: '↩ 恢复', purge: '🔥 彻底删除', clear: '🧹 清空', register: '📝 注册', login: '🔑 登录', rename: '🏷 改名', reset_pw: '🔒 重置密码', set_admin: '👑 设置管理员' }[l.action] || esc(l.action)}</span>
+              <span class="log-action ${esc(l.action)}">${{ edit: '✏ 编辑', delete: '🗑 删除', sink: '⬇ 沉底', unsink: '⬆ 恢复', hide: '⛔ 屏蔽', unhide: '↩ 解除屏蔽', review: '✅ 审核', trash: '🗑 回收站', restore: '↩ 恢复', purge: '🔥 彻底删除', clear: '🧹 清空', register: '📝 注册', login: '🔑 登录', rename: '🏷 改名', reset_pw: '🔒 重置密码', set_admin: '👑 设置管理员', clear_flags: '🧹 清违规', delete_user: '🗑 删账号' }[l.action] || esc(l.action)}</span>
               <b>#${l.post_id}「${esc(l.title)}」</b>
               <span class="comment-time">${esc(l.time)}</span>
             </div>
@@ -1521,7 +1522,7 @@
     loadTrash();
   }
 
-  /* ---------- 账号管理（重置密码 / 授予撤销管理员） ---------- */
+  /* ---------- 账号管理（全量列表 + 手动管理） ---------- */
 
   function showUsersResult(cls, html) {
     const box = $('#users-result');
@@ -1530,50 +1531,89 @@
     box.innerHTML = html;
   }
 
-  function openUsers() {
-    $('#u-qq-reset').value = '';
-    $('#u-pw').value = '';
-    $('#u-qq-admin').value = '';
-    $('#u-admin').value = '1';
-    $('#users-result').classList.add('hidden');
-    openModal('modal-users');
-    $('#u-qq-reset').focus();
+  function userRowHtml(u) {
+    const meta = [
+      'QQ ' + esc(u.qq),
+      u.is_admin ? '👑 管理员' : '普通用户',
+      '🚩 违规 ' + u.flags + ' 次',
+      '注册 ' + esc(u.created_at || '—'),
+      '最后登录 ' + esc(u.last_login || '从未登录'),
+    ].join(' · ');
+    return `
+      <div class="user-row">
+        <div class="user-main">
+          <div class="user-name">${esc(u.name || '未设置')}</div>
+          <div class="user-meta">${meta}</div>
+        </div>
+        <div class="user-actions">
+          <button type="button" class="comment-reply-btn" data-user-act="rename" data-qq="${esc(u.qq)}">✏ 改名</button>
+          <button type="button" class="comment-reply-btn" data-user-act="pw" data-qq="${esc(u.qq)}">🔒 重置密码</button>
+          <button type="button" class="comment-reply-btn ${u.is_admin ? 'warn' : 'ok'}" data-user-act="admin" data-qq="${esc(u.qq)}">${u.is_admin ? '⬇ 撤销管理' : '⬆ 设为管理'}</button>
+          ${u.flags ? `<button type="button" class="comment-reply-btn" data-user-act="flags" data-qq="${esc(u.qq)}">🧹 清违规</button>` : ''}
+          <button type="button" class="comment-reply-btn danger" data-user-act="delete" data-qq="${esc(u.qq)}">🗑 删除</button>
+        </div>
+      </div>`;
   }
 
-  async function submitResetPw(e) {
-    e.preventDefault();
-    const btn = $('#form-reset-pw button[type="submit"]');
-    btn.disabled = true;
+  async function loadUsers() {
     try {
-      const res = await api('/api/admin/user/reset_password', {
-        token: state.token,
-        qq: $('#u-qq-reset').value.trim(),
-        password: $('#u-pw').value,
-      });
+      const res = await api('/api/admin/users', { token: state.token });
       if (!res.ok) throw new Error(res.error);
-      showUsersResult('ok', `✅ 已重置 <b>${esc($('#u-qq-reset').value.trim())}</b> 的密码（该账号需重新登录）`);
-      $('#u-qq-reset').value = '';
-      $('#u-pw').value = '';
-    } catch (err) {
-      showUsersResult('err', '❌ ' + (err.message || '操作失败'));
-    } finally {
-      btn.disabled = false;
+      state.adminUsers = res.users;
+      const list = $('#users-list');
+      if (!res.users.length) {
+        list.innerHTML = '<p class="empty-inline">还没有账号注册</p>';
+      } else {
+        list.innerHTML = res.users.map(userRowHtml).join('');
+      }
+    } catch (e) {
+      $('#users-list').innerHTML = '<p class="empty-inline">加载失败：' + esc(e && e.message) + '</p>';
     }
   }
 
-  async function submitSetAdmin(e) {
-    e.preventDefault();
-    const btn = $('#form-set-admin button[type="submit"]');
+  function openUsers() {
+    $('#users-result').classList.add('hidden');
+    $('#users-list').innerHTML = '<p class="empty-inline">加载中…</p>';
+    openModal('modal-users');
+    loadUsers();
+  }
+
+  async function userAction(act, qq, btn) {
     btn.disabled = true;
     try {
-      const qq = $('#u-qq-admin').value.trim();
-      const isAdmin = $('#u-admin').value === '1';
-      const res = await api('/api/admin/user/set_admin', { token: state.token, qq, is_admin: isAdmin });
-      if (!res.ok) throw new Error(res.error);
-      showUsersResult('ok', `✅ 已${isAdmin ? '授予' : '撤销'} <b>${esc(qq)}</b> 的管理员权限`);
-      $('#u-qq-admin').value = '';
+      let res;
+      if (act === 'rename') {
+        const name = prompt('输入「' + qq + '」的新昵称：');
+        if (!name) return;
+        res = await api('/api/admin/user/rename', { token: state.token, qq, name });
+        if (!res.ok) throw new Error(res.error);
+        showUsersResult('ok', `✅ 已把 <b>${esc(qq)}</b> 的昵称改为「${esc(name)}」`);
+      } else if (act === 'pw') {
+        const pw = prompt('输入「' + qq + '」的新密码（6-20 位，不要和 QQ 真实密码相同）：');
+        if (!pw) return;
+        res = await api('/api/admin/user/reset_password', { token: state.token, qq, password: pw });
+        if (!res.ok) throw new Error(res.error);
+        showUsersResult('ok', `✅ 已重置 <b>${esc(qq)}</b> 的密码（该账号需重新登录）`);
+      } else if (act === 'admin') {
+        const u = (state.adminUsers || []).find((x) => x.qq === qq);
+        const isAdmin = !(u && u.is_admin);
+        res = await api('/api/admin/user/set_admin', { token: state.token, qq, is_admin: isAdmin });
+        if (!res.ok) throw new Error(res.error);
+        showUsersResult('ok', `✅ 已${isAdmin ? '授予' : '撤销'} <b>${esc(qq)}</b> 的管理员权限`);
+      } else if (act === 'flags') {
+        res = await api('/api/admin/user/clear_flags', { token: state.token, qq });
+        if (!res.ok) throw new Error(res.error);
+        showUsersResult('ok', `✅ 已清零 <b>${esc(qq)}</b> 的违规计数`);
+      } else if (act === 'delete') {
+        if (!confirm(`确定删除账号 ${qq}？\n\n该账号将无法再登录；其历史帖子和点赞保留，作者显示为「匿名」。此操作不可恢复。`)) return;
+        res = await api('/api/admin/user/delete', { token: state.token, qq });
+        if (!res.ok) throw new Error(res.error);
+        showUsersResult('ok', `✅ 已删除账号 <b>${esc(qq)}</b>`);
+      }
+      await loadUsers();
     } catch (err) {
       showUsersResult('err', '❌ ' + (err.message || '操作失败'));
+      await loadUsers();
     } finally {
       btn.disabled = false;
     }
@@ -1603,13 +1643,12 @@
     try {
       const res = await fetch('/static/changelog.json');
       const data = await res.json();
-      $('#changelog-list').innerHTML = (data.versions || []).map((v) => `
+      $('#changelog-list').innerHTML = (data.groups || []).map((g) => `
         <div class="changelog-item">
           <div class="changelog-head">
-            <b>${esc(v.version)}</b>
-            <span class="comment-time">${esc(v.date)}</span>
+            <b>📅 ${esc(g.date)}</b>
           </div>
-          <ul>${(v.items || []).map((i) => `<li>${esc(i)}</li>`).join('')}</ul>
+          <ul>${(g.items || []).map((i) => `<li>${esc(i)}</li>`).join('')}</ul>
         </div>`).join('');
       openModal('modal-changelog');
     } catch (err) {
@@ -1698,8 +1737,11 @@
     e.preventDefault();
     openUsers();
   });
-  on('#form-reset-pw', 'submit', submitResetPw);
-  on('#form-set-admin', 'submit', submitSetAdmin);
+  on('#users-list', 'click', (e) => {
+    const btn = e.target.closest('[data-user-act]');
+    if (!btn) return;
+    userAction(btn.dataset.userAct, btn.dataset.qq, btn);
+  });
   on('#pending-list', 'click', (e) => {
     const btn = e.target.closest('[data-pending-action]');
     if (!btn) return;

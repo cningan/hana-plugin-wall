@@ -209,7 +209,7 @@
           <label for="r-name">昵称</label>
           <input id="r-name" type="text" maxlength="50" placeholder="群友怎么称呼你？" required>
         </div>
-        <p class="field-hint">注册时填的昵称若与旧游客身份一致（昵称+QQ 匹配），会自动继承原身份（👑 标记 / 违规记录 / 历史点赞）。</p>
+        <p class="field-hint">密码 6-20 位，<b>建议不要和你的 QQ 真实密码相同</b>。注册时填的昵称若与旧游客身份一致（昵称+QQ 匹配），会自动继承原身份（👑 标记 / 违规记录 / 历史点赞）。</p>
         <div id="reg-tip" class="name-tip hidden"></div>
         <button type="submit" class="btn btn-primary btn-block">注册</button>
       </form>
@@ -362,40 +362,17 @@
   </div>
 </div>
 
-<!-- 账号管理弹窗（仅管理模式可见）：重置密码 / 授予撤销管理员 -->
+<!-- 账号管理弹窗（仅管理模式可见）：全量账号列表 + 手动管理 -->
 <div id="modal-users" class="modal-mask hidden">
-  <div class="modal modal-small">
+  <div class="modal modal-detail">
     <div class="modal-head">
       <h2>🔧 账号管理</h2>
       <button class="btn-close" data-close="modal-users">✕</button>
     </div>
-    <p class="pending-desc">管理员的授权工具：重置密码（用户忘记密码走人工找回）、授予/撤销管理员（想当管理员需向李申请）。</p>
-    <form id="form-reset-pw" class="field-form">
-      <div class="field">
-        <label for="u-qq-reset">QQ 号</label>
-        <input id="u-qq-reset" maxlength="20" placeholder="例如 123456789" required>
-      </div>
-      <div class="field">
-        <label for="u-pw">新密码</label>
-        <input id="u-pw" type="password" maxlength="20" placeholder="6-20 位，重置后需重新登录" required>
-      </div>
-      <button type="submit" class="btn btn-primary btn-block">重置该账号密码</button>
-    </form>
-    <hr>
-    <form id="form-set-admin" class="field-form">
-      <div class="field">
-        <label for="u-qq-admin">QQ 号</label>
-        <input id="u-qq-admin" maxlength="20" placeholder="例如 123456789" required>
-      </div>
-      <div class="field">
-        <label for="u-admin">权限</label>
-        <select id="u-admin">
-          <option value="1">授予管理员</option>
-          <option value="0">撤销管理员</option>
-        </select>
-      </div>
-      <button type="submit" class="btn btn-primary btn-block">保存</button>
-    </form>
+    <p class="pending-desc">所有注册账号一览。可改昵称、重置密码（忘记密码的人工找回通道）、授予/撤销管理员（想当管理员需向李申请）、清零违规计数、删除账号。⚠️ 密码请勿与 QQ 真实密码相同。</p>
+    <div id="users-list" class="users-list">
+      <p class="empty-inline">加载中…</p>
+    </div>
     <div id="users-result" class="identity-result hidden"></div>
   </div>
 </div>

@@ -702,6 +702,9 @@ class Handler(BaseHTTPRequestHandler):
                 if not isinstance(password, str) or len(password) < 6 or len(password) > 20:
                     self._send(400, {"ok": False, "error": "密码长度需 6-20 位"})
                     return
+                if password == qq:
+                    self._send(400, {"ok": False, "error": "密码不能与账号（QQ 号）相同，也请勿使用 QQ 真实密码"})
+                    return
                 name = clean_text(data.get("name", ""), "name")
                 if not name:
                     self._send(400, {"ok": False, "error": "请填写昵称"})
@@ -773,6 +776,7 @@ class Handler(BaseHTTPRequestHandler):
                     append_log("login", 0, info.get("name", qq),
                                f"登录：设备迁移 {str(info.get('fp', ''))[:8]}… → {fp[:8]}…")
                     info["fp"] = fp
+                info["last_login"] = now_str()
                 if not info.get("token"):
                     info["token"] = secrets.token_hex(16)  # 该账号首个登录凭证
                 save_users(users)
@@ -819,6 +823,9 @@ class Handler(BaseHTTPRequestHandler):
                 if not isinstance(password, str) or len(password) < 6 or len(password) > 20:
                     self._send(400, {"ok": False, "error": "密码长度需 6-20 位"})
                     return
+                if password == qq:
+                    self._send(400, {"ok": False, "error": "密码不能与账号（QQ 号）相同，也请勿使用 QQ 真实密码"})
+                    return
                 users = load_users()
                 info = users.get(qq)
                 if info is None:
@@ -850,6 +857,87 @@ class Handler(BaseHTTPRequestHandler):
                 append_log("set_admin", 0, info.get("name", qq),
                            f"{'授予' if is_admin else '撤销'}管理员（账号 {qq}）")
                 self._send(200, {"ok": True, "is_admin": is_admin})
+                return
+            if path == "/api/admin/users":
+                """账号全量列表（仅管理模式可见）：管理员排前，其余按注册时间倒序"""
+                if not check_token(clean_text(data.get("token", ""), "token")):
+                    self._send(401, {"ok": False, "error": "未登录或登录已过期"})
+                    return
+                users = load_users()
+                arr = []
+                for qq, u in users.items():
+                    arr.append({
+                        "qq": qq,
+                        "name": u.get("name", ""),
+                        "is_admin": bool(u.get("is_admin")),
+                        "flags": u.get("flags", 0),
+                        "created_at": u.get("created_at", ""),
+                        "last_login": u.get("last_login", ""),
+                    })
+                arr.sort(key=lambda x: (x["is_admin"], x["created_at"]), reverse=True)
+                self._send(200, {"ok": True, "users": arr})
+                return
+            if path == "/api/admin/user/rename":
+                """管理员修改指定账号的昵称"""
+                if not check_token(clean_text(data.get("token", ""), "token")):
+                    self._send(401, {"ok": False, "error": "未登录或登录已过期"})
+                    return
+                qq = clean_text(data.get("qq", ""), "qq")
+                name = clean_text(data.get("name", ""), "name")
+                if not QQ_RE.fullmatch(qq):
+                    self._send(400, {"ok": False, "error": "QQ 号格式不正确"})
+                    return
+                if not name:
+                    self._send(400, {"ok": False, "error": "昵称不能为空"})
+                    return
+                users = load_users()
+                info = users.get(qq)
+                if info is None:
+                    self._send(404, {"ok": False, "error": "该 QQ 未注册"})
+                    return
+                info["name"] = name
+                save_users(users)
+                append_log("rename", 0, name, f"管理员改昵称（账号 {qq}）")
+                self._send(200, {"ok": True, "name": name})
+                return
+            if path == "/api/admin/user/clear_flags":
+                """管理员清零指定账号的违规计数"""
+                if not check_token(clean_text(data.get("token", ""), "token")):
+                    self._send(401, {"ok": False, "error": "未登录或登录已过期"})
+                    return
+                qq = clean_text(data.get("qq", ""), "qq")
+                if not QQ_RE.fullmatch(qq):
+                    self._send(400, {"ok": False, "error": "QQ 号格式不正确"})
+                    return
+                users = load_users()
+                info = users.get(qq)
+                if info is None:
+                    self._send(404, {"ok": False, "error": "该 QQ 未注册"})
+                    return
+                info["flags"] = 0
+                save_users(users)
+                append_log("clear_flags", 0, info.get("name", qq), f"清零违规计数（账号 {qq}）")
+                self._send(200, {"ok": True})
+                return
+            if path == "/api/admin/user/delete":
+                """管理员删除指定账号（历史帖子和点赞保留，作者名变为匿名）"""
+                if not check_token(clean_text(data.get("token", ""), "token")):
+                    self._send(401, {"ok": False, "error": "未登录或登录已过期"})
+                    return
+                qq = clean_text(data.get("qq", ""), "qq")
+                if not QQ_RE.fullmatch(qq):
+                    self._send(400, {"ok": False, "error": "QQ 号格式不正确"})
+                    return
+                users = load_users()
+                info = users.get(qq)
+                if info is None:
+                    self._send(404, {"ok": False, "error": "该 QQ 未注册"})
+                    return
+                del users[qq]
+                save_users(users)
+                append_log("delete_user", 0, info.get("name", qq),
+                           f"删除账号 {qq}（历史内容保留，作者显示匿名）")
+                self._send(200, {"ok": True})
                 return
             m = re.match(r"^/api/admin/posts/(\d+)/edit$", path)
             if m:
