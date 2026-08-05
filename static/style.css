@@ -656,6 +656,15 @@ main { max-width: 1080px; margin: 0 auto; padding: 24px; }
 .comment-reply-btn.danger { color: #b0453a; border-color: #b0453a; background: #fcf1ef; }
 .comment-reply-btn.danger:hover { background: #f6e2de; }
 
+.comment-reply-btn.dead {
+  color: #b3aca0;
+  border-color: var(--line);
+  background: var(--card-soft);
+  cursor: not-allowed;
+}
+
+.comment-reply-btn.dead:hover { color: #b3aca0; border-color: var(--line); background: var(--card-soft); }
+
 .comment-actions {
   display: flex;
   align-items: center;

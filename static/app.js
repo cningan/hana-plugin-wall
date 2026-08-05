@@ -287,15 +287,16 @@
     return d;
   }
 
-  /* 评论嵌套渲染（旧数据超深照旧嵌套展示；新回复由提交检查禁止超 4 层） */
-  function commentNodeHtml(c, all, byReplyTo, depth, pid) {
+  /* 评论嵌套渲染（旧数据超深照旧嵌套展示；深度 >= 4 的评论回复按钮灰化，无法继续回复） */
+  function commentNodeHtml(c, all, byReplyTo, depth, pid, depths) {
     if (depth > 10) return '';
     const kids = (byReplyTo.get(c.id) || [])
-      .map((k) => commentNodeHtml(k, all, byReplyTo, depth + 1, pid)).join('');
+      .map((k) => commentNodeHtml(k, all, byReplyTo, depth + 1, pid, depths)).join('');
     const parent = all.find((x) => x.id === c.reply_to);
     const adminCanSee = state.adminMode;
     const st = itemStatus(c);
     const hidden = st !== 'normal';
+    const deep = (depths.get(c.id) || 0) >= 3; // 已到 4 层上限，无法再回复
     let body;
     if (hidden && !adminCanSee) {
       body = st === 'pending'
@@ -314,7 +315,10 @@
         `<button type="button" class="comment-reply-btn danger" data-del-comment data-cid="${c.id}" title="移入回收站（保留 7 天）">🗑 删除</button>`
       : '';
     const replyBtn = (!hidden || adminCanSee)
-      ? `<button type="button" class="comment-reply-btn" data-reply-btn="${c.id}">↩ 回复</button>` : '';
+      ? (deep
+          ? `<button type="button" class="comment-reply-btn dead" data-reply-dead="${c.id}" title="回复链已达 4 层上限，请开新楼回复">↩ 回复</button>`
+          : `<button type="button" class="comment-reply-btn" data-reply-btn="${c.id}">↩ 回复</button>`)
+      : '';
     return `
       <div class="comment${c.reply_to ? ' comment-reply' : ''}${hidden ? ' comment-hidden' : ''}">
         <b>${esc(c.name)}</b>${adminTag(c)}
@@ -336,11 +340,13 @@
       arr.push(c);
       byReplyTo.set(c.reply_to, arr);
     });
+    const cache = new Map();
+    withId.forEach((c) => commentDepth(c, withId, cache));
     const tops = withId.filter((c) => !c.reply_to || !withId.some((x) => x.id === c.reply_to));
     const listHtml = (tops.length || orphans.length)
       ? '<div class="comment-list">' +
-        orphans.map((c) => commentNodeHtml(c, withId, byReplyTo, 0, post.id)).join('') +
-        tops.map((c) => commentNodeHtml(c, withId, byReplyTo, 0, post.id)).join('') +
+        orphans.map((c) => commentNodeHtml(c, withId, byReplyTo, 0, post.id, cache)).join('') +
+        tops.map((c) => commentNodeHtml(c, withId, byReplyTo, 0, post.id, cache)).join('') +
         '</div>'
       : '';
     return `
@@ -568,15 +574,16 @@
 
   /* ---------- 留言板渲染 ---------- */
 
-  /* 留言板嵌套渲染（旧数据超深照旧展示；新回复由提交检查禁止超 4 层） */
-  function wallItemHtml(m, withId, byReplyTo, depth) {
+  /* 留言板嵌套渲染（旧数据超深照旧展示；深度 >= 4 的留言回复按钮灰化，无法继续回复） */
+  function wallItemHtml(m, withId, byReplyTo, depth, depths) {
     if (depth > 10) return '';
     const kids = (byReplyTo.get(m.id) || [])
-      .map((k) => wallItemHtml(k, withId, byReplyTo, depth + 1)).join('');
+      .map((k) => wallItemHtml(k, withId, byReplyTo, depth + 1, depths)).join('');
     const parent = withId.find((x) => x.id === m.reply_to);
     const adminCanSee = state.adminMode;
     const st = itemStatus(m);
     const hidden = st !== 'normal';
+    const deep = (depths.get(m.id) || 0) >= 3; // 已到 4 层上限，无法再回复
     let body;
     if (hidden && !adminCanSee) {
       body = st === 'pending'
@@ -595,7 +602,10 @@
         `<button type="button" class="comment-reply-btn danger" data-del-wall data-cid="${m.id}" title="移入回收站（保留 7 天）">🗑 删除</button>`
       : '';
     const replyBtn = (!hidden || adminCanSee)
-      ? `<button type="button" class="comment-reply-btn" data-wall-reply="${m.id}">↩ 回复</button>` : '';
+      ? (deep
+          ? `<button type="button" class="comment-reply-btn dead" data-wall-reply-dead="${m.id}" title="回复链已达 4 层上限，请开新楼回复">↩ 回复</button>`
+          : `<button type="button" class="comment-reply-btn" data-wall-reply="${m.id}">↩ 回复</button>`)
+      : '';
     return `
       <div class="wall-item${m.reply_to ? ' wall-reply' : ''}${hidden ? ' comment-hidden' : ''}">
         <b>${esc(m.name)}</b>${adminTag(m)}
@@ -616,10 +626,12 @@
       arr.push(m);
       byReplyTo.set(m.reply_to, arr);
     });
+    const cache = new Map();
+    withId.forEach((m) => commentDepth(m, withId, cache));
     const tops = withId
       .filter((m) => !m.reply_to || !withId.some((x) => x.id === m.reply_to))
       .sort((a, b) => b.id - a.id);
-    $('#wall-list').innerHTML = tops.map((m) => wallItemHtml(m, withId, byReplyTo, 0)).join('');
+    $('#wall-list').innerHTML = tops.map((m) => wallItemHtml(m, withId, byReplyTo, 0, cache)).join('');
     $('#empty-wall').classList.toggle('hidden', state.wall.length > 0);
   }
 
@@ -1580,6 +1592,11 @@
   });
 
   on('#wall-list', 'click', (e) => {
+    const deadBtn = e.target.closest('[data-wall-reply-dead]');
+    if (deadBtn) {
+      toast('回复链已达 4 层上限，请开新楼回复 🏠');
+      return;
+    }
     const delBtn = e.target.closest('[data-del-wall]');
     if (delBtn) {
       deleteWallMsg(Number(delBtn.dataset.cid));
@@ -1598,7 +1615,8 @@
     const m = state.wall.find((x) => x.id === cid);
     if (m) {
       if (commentDepth(m, state.wall.filter((x) => x.id != null), new Map()) >= 3) {
-        toast('该回复链已达 4 层上限，建议开新楼回复 🏠');
+        toast('回复链已达 4 层上限，请开新楼回复 🏠');
+        return;
       }
       setWallReply(cid, m.name);
     }
@@ -1634,6 +1652,11 @@
       const sinkBtn = e.target.closest('[data-sink]');
       const unsinkBtn = e.target.closest('[data-unsink]');
       const reviewBtn = e.target.closest('[data-review]');
+      const replyDeadBtn = e.target.closest('[data-reply-dead]');
+      if (replyDeadBtn) {
+        toast('回复链已达 4 层上限，请开新楼回复 🏠');
+        return;
+      }
       const likeEl = e.target.closest('[data-like]');
       const replyBtn = e.target.closest('[data-reply-btn]');
       const copyBtn = e.target.closest('[data-copy-repo]');
@@ -1660,7 +1683,8 @@
         if (c) {
           const cs = (p.comments || []).filter((x) => x.id != null);
           if (commentDepth(c, cs, new Map()) >= 3) {
-            toast('该回复链已达 4 层上限，建议开新楼回复 🏠');
+            toast('回复链已达 4 层上限，请开新楼回复 🏠');
+            return;
           }
           setReply(pid, cid, c.name);
         }
