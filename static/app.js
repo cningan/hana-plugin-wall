@@ -18,6 +18,7 @@
     sortDone: loadSort('hana_wall_sort_done'),
     query: '',
     announcement: null,
+    pendingCount: 0,
   };
 
   function loadSort(key) {
@@ -176,7 +177,8 @@
 
   async function loadPosts() {
     try {
-      const res = await api('/api/posts?fp=' + state.fp);
+      const res = await api('/api/posts?fp=' + state.fp +
+        (state.token ? '&token=' + encodeURIComponent(state.token) : ''));
       if (!res.ok) throw new Error(res.error);
       state.posts = res.posts;
       render();
@@ -187,7 +189,8 @@
 
   async function loadWall() {
     try {
-      const res = await api('/api/wall');
+      const res = await api('/api/wall' +
+        (state.token ? '?token=' + encodeURIComponent(state.token) : ''));
       if (!res.ok) throw new Error(res.error);
       state.wall = res.wall;
       renderWall();
@@ -228,11 +231,16 @@
 
   function adminBar(post) {
     if (!state.adminMode) return '';
+    const st = itemStatus(post);
+    const reviewBtn = st === 'normal'
+      ? `<button class="admin-btn danger" data-review="${post.id}" title="屏蔽，访客不可见">⛔ 屏蔽</button>`
+      : `<button class="admin-btn" data-review="${post.id}" title="${st === 'pending' ? '审核通过，公开展示' : '恢复显示'}">✅ 放行</button>`;
     const sinkBtn = post.sunk
       ? `<button class="admin-btn" data-unsink="${post.id}" title="恢复显示，回到正常排序">⬆ 恢复</button>`
       : `<button class="admin-btn" data-sink="${post.id}" title="沉底：不合理的卡片沉到最底部，带标识">⬇ 沉底</button>`;
     return `
       <div class="admin-bar">
+        ${reviewBtn}
         ${sinkBtn}
         <button class="admin-btn" data-edit="${post.id}">✏ 编辑</button>
         <button class="admin-btn danger" data-del="${post.id}">🗑 删除</button>
@@ -250,22 +258,42 @@
     return item.is_admin ? '<span class="admin-tag" title="管理员">👑</span>' : '';
   }
 
+  /* 内容状态（三态）：normal 正常 / pending 敏感词待审 / hidden 管理员屏蔽；兼容旧数据 hidden 布尔 */
+  function itemStatus(item) {
+    const st = item ? item.status : '';
+    if (st === 'normal' || st === 'pending' || st === 'hidden') return st;
+    return item && item.hidden ? 'hidden' : 'normal';
+  }
+
+  function statusBadge(item) {
+    const st = itemStatus(item);
+    if (st === 'pending') return '<span class="blocked-tag pending" title="命中敏感词，待管理员审核">⏳ 待审核</span>';
+    if (st === 'hidden') return '<span class="blocked-tag">⛔ 已屏蔽</span>';
+    return '';
+  }
+
   function commentNodeHtml(c, all, byReplyTo, depth, pid) {
     if (depth > 10) return '';
     const kids = (byReplyTo.get(c.id) || []).map((k) => commentNodeHtml(k, all, byReplyTo, depth + 1, pid));
     const parent = all.find((x) => x.id === c.reply_to);
     const adminCanSee = state.adminMode;
-    const hidden = !!c.hidden;
+    const st = itemStatus(c);
+    const hidden = st !== 'normal';
     let body;
     if (hidden && !adminCanSee) {
-      body = '<p class="blocked-hint">⛔ 该内容已被管理员屏蔽</p>';
+      body = st === 'pending'
+        ? '<p class="blocked-hint">⏳ 该内容包含敏感词，正在等待管理员审核</p>'
+        : '<p class="blocked-hint">⛔ 该内容已被管理员屏蔽</p>';
     } else {
-      body = `<p>${renderText(c.content)}</p>${hidden ? ' <span class="blocked-tag">⛔ 已屏蔽</span>' : ''}`;
+      body = `<p>${renderText(c.content)}</p>${statusBadge(c)}` +
+        (adminCanSee && c.sensitive && c.sensitive.length
+          ? `<p class="sensitive-hint">命中词：${c.sensitive.map((w) => `<b>${esc(w)}</b>`).join('、')}</p>`
+          : '');
     }
     const adminBtn = adminCanSee
-      ? (hidden
-          ? `<button type="button" class="comment-reply-btn" data-unhide="comment" data-cid="${c.id}" title="恢复显示">↩ 解除屏蔽</button>`
-          : `<button type="button" class="comment-reply-btn danger" data-hide="comment" data-cid="${c.id}" title="屏蔽后访客不可见，原地留痕">⛔ 屏蔽</button>`)
+      ? (st === 'normal'
+          ? `<button type="button" class="comment-reply-btn danger" data-hide="comment" data-cid="${c.id}" title="屏蔽后访客不可见，原地留痕">⛔ 屏蔽</button>`
+          : `<button type="button" class="comment-reply-btn" data-unhide="comment" data-cid="${c.id}" title="${st === 'pending' ? '审核通过，恢复显示' : '恢复显示'}">✅ 放行</button>`)
       : '';
     const replyBtn = (!hidden || adminCanSee)
       ? `<button type="button" class="comment-reply-btn" data-reply-btn="${c.id}">↩ 回复</button>` : '';
@@ -335,7 +363,7 @@
   function needCard(post) {
     return `
       <article class="card need${post.sunk ? ' sunk' : ''}" data-open-detail="${post.id}">
-        <h3 class="card-title">${esc(post.title)}${isMine(post) ? ' <span class="mine-tag" title="你发布 / 认领 / 留言过的">🫵 我的</span>' : ''}</h3>
+        <h3 class="card-title">${esc(post.title)}${isMine(post) ? ' <span class="mine-tag" title="你发布 / 认领 / 留言过的">🫵 我的</span>' : ''}${statusBadge(post)}</h3>
         <p class="card-excerpt">${renderText(post.content, { noImages: true })}</p>
         ${cardMeta(post, needStatusTag(post) + sinkTag(post))}
         <div class="card-foot">
@@ -348,7 +376,7 @@
   function doneCard(post) {
     return `
       <article class="card done${post.sunk ? ' sunk' : ''}" data-open-detail="${post.id}">
-        <h3 class="card-title">${esc(post.title)}${isMine(post) ? ' <span class="mine-tag" title="你发布 / 认领 / 留言过的">🫵 我的</span>' : ''}</h3>
+        <h3 class="card-title">${esc(post.title)}${isMine(post) ? ' <span class="mine-tag" title="你发布 / 认领 / 留言过的">🫵 我的</span>' : ''}${statusBadge(post)}</h3>
         <p class="card-excerpt">${renderText(post.content, { noImages: true })}</p>
         ${cardMeta(post, sinkTag(post))}
         <div class="card-foot">
@@ -393,6 +421,9 @@
         <h3 class="post-title">${esc(post.title)}</h3>
       </div>`;
     const sunkHtml = post.sunk ? '<div class="reply-box sink-box">⬇ 该卡片已被管理员沉底，内容仅供参考</div>' : '';
+    const stHtml = state.adminMode && itemStatus(post) !== 'normal'
+      ? `<div class="reply-box sink-box">${itemStatus(post) === 'pending' ? '⏳ 命中敏感词，待审核' : '⛔ 已被屏蔽'}${post.sensitive && post.sensitive.length ? '：' + post.sensitive.map((w) => `<b>${esc(w)}</b>`).join('、') : ''}</div>`
+      : '';
     const actions = isDone ? '<span class="action-spacer"></span>' : `
       ${claimBtn}
       <button class="btn btn-primary" data-submit-done="${post.id}">📤 提交成果</button>
@@ -408,6 +439,7 @@
           <span>🕐 ${esc(post.created_at)}</span>
         </div>
         ${sunkHtml}
+        ${stHtml}
         ${statusHtml}
         ${replyHtml}
         ${commentAreaHtml(post)}
@@ -527,17 +559,23 @@
       .map((k) => wallItemHtml(k, (depth || 0) + 1)).join('');
     const parent = state.wall.find((x) => x.id === m.reply_to);
     const adminCanSee = state.adminMode;
-    const hidden = !!m.hidden;
+    const st = itemStatus(m);
+    const hidden = st !== 'normal';
     let body;
     if (hidden && !adminCanSee) {
-      body = '<p class="blocked-hint">⛔ 该内容已被管理员屏蔽</p>';
+      body = st === 'pending'
+        ? '<p class="blocked-hint">⏳ 该内容包含敏感词，正在等待管理员审核</p>'
+        : '<p class="blocked-hint">⛔ 该内容已被管理员屏蔽</p>';
     } else {
-      body = `<p>${renderText(m.content)}</p>${hidden ? ' <span class="blocked-tag">⛔ 已屏蔽</span>' : ''}`;
+      body = `<p>${renderText(m.content)}</p>${statusBadge(m)}` +
+        (adminCanSee && m.sensitive && m.sensitive.length
+          ? `<p class="sensitive-hint">命中词：${m.sensitive.map((w) => `<b>${esc(w)}</b>`).join('、')}</p>`
+          : '');
     }
     const adminBtn = adminCanSee
-      ? (hidden
-          ? `<button type="button" class="comment-reply-btn" data-unhide="wall" data-cid="${m.id}" title="恢复显示">↩ 解除屏蔽</button>`
-          : `<button type="button" class="comment-reply-btn danger" data-hide="wall" data-cid="${m.id}" title="屏蔽后访客不可见，原地留痕">⛔ 屏蔽</button>`)
+      ? (st === 'normal'
+          ? `<button type="button" class="comment-reply-btn danger" data-hide="wall" data-cid="${m.id}" title="屏蔽后访客不可见，原地留痕">⛔ 屏蔽</button>`
+          : `<button type="button" class="comment-reply-btn" data-unhide="wall" data-cid="${m.id}" title="${st === 'pending' ? '审核通过，恢复显示' : '恢复显示'}">✅ 放行</button>`)
       : '';
     const replyBtn = (!hidden || adminCanSee)
       ? `<button type="button" class="comment-reply-btn" data-wall-reply="${m.id}">↩ 回复</button>` : '';
@@ -712,7 +750,9 @@
       const res = await api('/api/posts', body);
       if (!res.ok) throw new Error(res.error);
       closeModal('modal-new');
-      toast(type === 'need' ? '需求已发布 ✅' : '成果已发布 🎉');
+      toast(res.post && res.post.status === 'pending'
+        ? '已提交，但内容命中敏感词，需管理员审核通过后展示 ⏳'
+        : (type === 'need' ? '需求已发布 ✅' : '成果已发布 🎉'));
       await loadPosts();
     } catch (err) {
       toast('发布失败：' + err.message);
@@ -736,7 +776,10 @@
       const res = await api(`/api/posts/${id}/comments`, body);
       if (!res.ok) throw new Error(res.error);
       clearReply();
-      toast('留言成功 💬');
+      const lastC = res.post && res.post.comments ? res.post.comments[res.post.comments.length - 1] : null;
+      toast(lastC && lastC.status === 'pending'
+        ? '留言成功，内容命中敏感词，待管理员审核 ⏳'
+        : '留言成功 💬');
       await loadPosts();
     } catch (err) {
       toast('留言失败：' + err.message);
@@ -777,7 +820,9 @@
       if (!res.ok) throw new Error(res.error);
       $('#w-content').value = '';
       clearWallReply();
-      toast('留言成功 💬');
+      toast(res.message && res.message.status === 'pending'
+        ? '留言成功，内容命中敏感词，待管理员审核 ⏳'
+        : '留言成功 💬');
       await loadWall();
     } catch (err) {
       toast('留言失败：' + err.message);
@@ -862,24 +907,106 @@
     }
   }
 
-  /* ---------- 屏蔽 / 恢复（评论与留言板） ---------- */
+  /* ---------- 屏蔽 / 放行 / 审核（三态：normal / pending / hidden） ---------- */
 
-  async function toggleHideComment(pid, cid, hidden) {
+  async function reviewComment(pid, cid, status) {
     try {
-      const res = await api(`/api/admin/posts/${pid}/comments/${cid}/hide`, { token: state.token, hidden });
+      const res = await api(`/api/admin/posts/${pid}/comments/${cid}/review`, { token: state.token, status });
       if (!res.ok) throw new Error(res.error);
-      toast(hidden ? '已屏蔽 ⛔' : '已恢复显示 ↩');
+      toast(status === 'normal' ? '已放行 ✅' : '已屏蔽 ⛔');
       await loadPosts();
     } catch (err) {
       toast('操作失败：' + err.message);
     }
   }
 
-  async function toggleHideWall(mid, hidden) {
+  async function reviewWall(mid, status) {
     try {
-      const res = await api(`/api/admin/wall/${mid}/hide`, { token: state.token, hidden });
+      const res = await api(`/api/admin/wall/${mid}/review`, { token: state.token, status });
       if (!res.ok) throw new Error(res.error);
-      toast(hidden ? '已屏蔽 ⛔' : '已恢复显示 ↩');
+      toast(status === 'normal' ? '已放行 ✅' : '已屏蔽 ⛔');
+      await loadWall();
+    } catch (err) {
+      toast('操作失败：' + err.message);
+    }
+  }
+
+  async function reviewPost(id, status) {
+    try {
+      const res = await api(`/api/admin/posts/${id}/review`, { token: state.token, status });
+      if (!res.ok) throw new Error(res.error);
+      toast(status === 'normal' ? '已放行 ✅' : '已屏蔽 ⛔');
+      await loadPosts();
+    } catch (err) {
+      toast('操作失败：' + err.message);
+    }
+  }
+
+  /* ---------- 待审队列（敏感词自动拦截，需管理员审核） ---------- */
+
+  function pendingKindLabel(kind) {
+    return { post: '📌 帖子', comment: '💬 评论', wall: '🗨 留言板' }[kind] || '';
+  }
+
+  function pendingItemHtml(it) {
+    const flags = it.flags > 0
+      ? `<p class="sensitive-hint">🚩 该设备已违规 ${it.flags} 次</p>` : '';
+    return `
+      <div class="pending-item">
+        <div class="pending-head">
+          <span class="log-action review">${pendingKindLabel(it.kind)}</span>
+          <b>${esc(it.name || it.author || '匿名')}</b>
+          <span class="comment-time">${esc(it.created_at)}</span>
+        </div>
+        ${it.title ? `<div class="pending-title">「${esc(it.title)}」</div>` : ''}
+        <div class="pending-content">${renderText(it.content, { noImages: true })}</div>
+        <p class="sensitive-hint">命中词：${it.sensitive.map((w) => `<b>${esc(w)}</b>`).join('、')}</p>
+        ${flags}
+        <div class="pending-actions">
+          <button type="button" class="comment-reply-btn" data-pending-action="normal" data-kind="${it.kind}" data-id="${it.id}" data-pid="${it.pid || ''}">✅ 放行</button>
+          <button type="button" class="comment-reply-btn danger" data-pending-action="hidden" data-kind="${it.kind}" data-id="${it.id}" data-pid="${it.pid || ''}">⛔ 屏蔽</button>
+        </div>
+      </div>`;
+  }
+
+  async function loadPending() {
+    if (!state.adminMode) return;
+    try {
+      const res = await api('/api/admin/pending?token=' + encodeURIComponent(state.token));
+      if (!res.ok) throw new Error(res.error);
+      const items = (res.posts || []).concat(res.comments || [], res.wall || []);
+      state.pendingCount = items.length;
+      const btn = $('#btn-pending');
+      if (btn) {
+        btn.textContent = state.pendingCount ? `🔔 待审 ${state.pendingCount}` : '🔔 待审';
+        btn.title = state.pendingCount ? `有 ${state.pendingCount} 条内容命中敏感词，等待审核` : '没有待审内容';
+      }
+      const list = $('#pending-list');
+      if (list && !$('#modal-pending').classList.contains('hidden')) {
+        list.innerHTML = items.length
+          ? items.map(pendingItemHtml).join('')
+          : '<p class="empty-inline">暂无待审内容 🎉</p>';
+      }
+    } catch (e) { /* 网络错误静默，按钮计数保持旧值 */ }
+  }
+
+  function openPending() {
+    $('#pending-list').innerHTML = '<p class="empty-inline">加载中…</p>';
+    openModal('modal-pending');
+    loadPending();
+  }
+
+  async function reviewPending(kind, id, pid, status) {
+    let path;
+    if (kind === 'post') path = `/api/admin/posts/${id}/review`;
+    else if (kind === 'comment') path = `/api/admin/posts/${pid}/comments/${id}/review`;
+    else path = `/api/admin/wall/${id}/review`;
+    try {
+      const res = await api(path, { token: state.token, status });
+      if (!res.ok) throw new Error(res.error);
+      toast(status === 'normal' ? '已放行 ✅' : '已屏蔽 ⛔');
+      await loadPending();
+      await loadPosts();
       await loadWall();
     } catch (err) {
       toast('操作失败：' + err.message);
@@ -978,11 +1105,13 @@
     const badge = $('#admin-badge');
     const annEdit = $('#btn-edit-announcement');
     const changelogBtn = $('#btn-changelog');
+    const pendingBtn = $('#btn-pending');
     const managing = state.adminMode;
     if (logsBtn) logsBtn.classList.toggle('hidden', !managing);
     if (badge) badge.classList.toggle('hidden', !managing);
     if (annEdit) annEdit.classList.toggle('hidden', !managing);
     if (changelogBtn) changelogBtn.classList.toggle('hidden', !state.vtoken);
+    if (pendingBtn) pendingBtn.classList.toggle('hidden', !managing);
     if (link) link.textContent = managing ? '⚙ 退出管理' : '⚙ 管理';
   }
 
@@ -1000,6 +1129,7 @@
       toast('已进入管理模式 ✨');
       renderNameUI();
       render();
+      loadPending();
     } catch (err) {
       toast('口令错误或网络异常：' + err.message);
     } finally {
@@ -1012,6 +1142,8 @@
     state.adminMode = false;
     toast('已退出管理模式（管理身份保留，随时可恢复）');
     render();
+    loadPosts();
+    loadWall();
   }
 
   async function toggleAdminMode() {
@@ -1028,6 +1160,7 @@
       if (res.ok) {
         state.adminMode = true;
         toast('已恢复管理模式 ✨');
+        loadPending();
       } else {
         state.token = '';
         localStorage.removeItem('hana_wall_token');
@@ -1037,6 +1170,7 @@
     } catch (e) {
       state.adminMode = true;
       toast('已恢复管理模式 ✨');
+      loadPending();
     }
     render();
   }
@@ -1052,7 +1186,7 @@
         list.innerHTML = res.logs.map((l) => `
           <div class="log-item">
             <div class="log-head">
-              <span class="log-action ${esc(l.action)}">${{ edit: '✏ 编辑', delete: '🗑 删除', sink: '⬇ 沉底', unsink: '⬆ 恢复', hide: '⛔ 屏蔽', unhide: '↩ 解除屏蔽' }[l.action] || esc(l.action)}</span>
+              <span class="log-action ${esc(l.action)}">${{ edit: '✏ 编辑', delete: '🗑 删除', sink: '⬇ 沉底', unsink: '⬆ 恢复', hide: '⛔ 屏蔽', unhide: '↩ 解除屏蔽', review: '✅ 审核' }[l.action] || esc(l.action)}</span>
               <b>#${l.post_id}「${esc(l.title)}」</b>
               <span class="comment-time">${esc(l.time)}</span>
             </div>
@@ -1207,6 +1341,15 @@
     e.preventDefault();
     openLogs();
   });
+  on('#btn-pending', 'click', (e) => {
+    e.preventDefault();
+    openPending();
+  });
+  on('#pending-list', 'click', (e) => {
+    const btn = e.target.closest('[data-pending-action]');
+    if (!btn) return;
+    reviewPending(btn.dataset.kind, Number(btn.dataset.id), Number(btn.dataset.pid || 0), btn.dataset.pendingAction);
+  });
   on('#btn-changelog', 'click', (e) => {
     e.preventDefault();
     openChangelog();
@@ -1274,7 +1417,7 @@
     const unhideBtn = e.target.closest('[data-unhide]');
     if (hideBtn || unhideBtn) {
       const mid = Number((hideBtn || unhideBtn).dataset.cid);
-      toggleHideWall(mid, !!hideBtn);
+      reviewWall(mid, hideBtn ? 'hidden' : 'normal');
       return;
     }
     const replyBtn = e.target.closest('[data-wall-reply]');
@@ -1299,7 +1442,7 @@
         const postEl = e.target.closest('.post');
         const pid = Number(postEl.dataset.pid);
         const cid = Number((hideBtn || unhideBtn).dataset.cid);
-        toggleHideComment(pid, cid, !!hideBtn);
+        reviewComment(pid, cid, hideBtn ? 'hidden' : 'normal');
         return;
       }
       const doneBtn = e.target.closest('[data-submit-done]');
@@ -1307,6 +1450,7 @@
       const delBtn = e.target.closest('[data-del]');
       const sinkBtn = e.target.closest('[data-sink]');
       const unsinkBtn = e.target.closest('[data-unsink]');
+      const reviewBtn = e.target.closest('[data-review]');
       const likeEl = e.target.closest('[data-like]');
       const replyBtn = e.target.closest('[data-reply-btn]');
       const copyBtn = e.target.closest('[data-copy-repo]');
@@ -1317,6 +1461,11 @@
       if (delBtn) { deletePost(Number(delBtn.dataset.del)); return; }
       if (sinkBtn) { toggleSink(Number(sinkBtn.dataset.sink), true); return; }
       if (unsinkBtn) { toggleSink(Number(unsinkBtn.dataset.unsink), false); return; }
+      if (reviewBtn) {
+        const post = state.posts.find((x) => x.id === Number(reviewBtn.dataset.review));
+        reviewPost(Number(reviewBtn.dataset.review), post && itemStatus(post) !== 'normal' ? 'normal' : 'hidden');
+        return;
+      }
       if (likeEl) { toggleLike(Number(likeEl.dataset.like)); return; }
       if (copyBtn) { copyRepo(Number(copyBtn.dataset.copyRepo)); return; }
       if (replyBtn) {

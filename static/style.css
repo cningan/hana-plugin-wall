@@ -660,6 +660,22 @@ main { max-width: 1080px; margin: 0 auto; padding: 24px; }
   margin-left: 6px;
 }
 
+.blocked-tag.pending {
+  color: #9a6b00;
+  background: #fdf0d1;
+}
+
+.sensitive-hint {
+  font-size: 12px;
+  color: #9a6b00;
+  background: #fdf0d1;
+  border-radius: 6px;
+  padding: 3px 8px;
+  margin: 4px 0;
+}
+
+.sensitive-hint b { font-weight: 700; }
+
 .comment-hidden, .comment-hidden .comment-reply-btn {
   opacity: .85;
 }
@@ -797,6 +813,9 @@ main { max-width: 1080px; margin: 0 auto; padding: 24px; }
 .log-action.delete { background: #f6e2de; color: #b0453a; }
 .log-action.sink { background: #ececec; color: #8a8a8a; }
 .log-action.unsink { background: #e7eee1; color: #55703f; }
+.log-action.review { background: #fdf0d1; color: #9a6b00; }
+.log-action.hide { background: #f6e2de; color: #b0453a; }
+.log-action.unhide { background: #e7eee1; color: #55703f; }
 
 .log-detail {
   margin-top: 4px;
@@ -804,6 +823,47 @@ main { max-width: 1080px; margin: 0 auto; padding: 24px; }
   font-size: 12.5px;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+/* ---------- 待审队列 ---------- */
+.pending-desc {
+  font-size: 12px;
+  color: var(--text-dim);
+  margin: 0 0 10px;
+}
+
+.pending-item {
+  background: var(--card-soft);
+  border: 1px solid #f0d9a0;
+  border-radius: 10px;
+  padding: 10px 14px;
+  font-size: 13px;
+}
+
+.pending-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.pending-title {
+  margin-top: 4px;
+  font-weight: 700;
+  word-break: break-word;
+}
+
+.pending-content {
+  margin-top: 4px;
+  color: #6b6355;
+  font-size: 12.5px;
+  word-break: break-word;
+}
+
+.pending-actions {
+  margin-top: 8px;
+  display: flex;
+  gap: 8px;
 }
 
 /* ---------- 更新日志 ---------- */
