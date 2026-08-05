@@ -11,6 +11,7 @@
     view: 'home',
     fp: getFingerprint(),
     me: localStorage.getItem('hana_wall_me') || '',
+    myQQ: '',
     vtoken: localStorage.getItem('hana_wall_vtoken') || readCookie('hw_vt') || '',
     reply: { pid: null, cid: null, name: '' },
     wallReply: { cid: null, name: '' },
@@ -668,6 +669,9 @@
   function openNameModal() {
     $('#n-name').value = state.me;
     $('#n-qq').value = '';
+    $('#n-qq-tip').textContent = state.myQQ
+      ? '✅ 已绑定 QQ：' + esc(state.myQQ) + '（留空保存不改绑）'
+      : '未绑定 QQ。填 QQ 号保存即绑定，之后可凭昵称+QQ 跨设备登录找回';
     $('#name-tip').classList.add('hidden');
     $('#btn-name-claim').classList.add('hidden');
     openModal('modal-name');
@@ -680,6 +684,7 @@
       const res = await api('/api/visitor/me?token=' + encodeURIComponent(state.vtoken));
       if (res.ok) {
         state.me = res.name;
+        state.myQQ = res.qq || '';
         localStorage.setItem('hana_wall_me', res.name);
         if (localStorage.getItem('hana_wall_vtoken') !== state.vtoken) {
           saveVtoken(state.vtoken); // Cookie 里恢复的凭证回写 localStorage
@@ -687,6 +692,7 @@
       } else {
         state.vtoken = '';
         state.me = '';
+        state.myQQ = '';
         clearVtoken();
         localStorage.removeItem('hana_wall_me');
         toast('登录凭证已失效，请重新设置昵称 👤');
@@ -732,9 +738,10 @@
         }
         state.me = res.name;
         state.vtoken = res.token;
+        state.myQQ = res.qq || '';
         localStorage.setItem('hana_wall_me', res.name);
         saveVtoken(res.token);
-        toast('昵称已设置，现在可以留言和点赞了 👤');
+        toast(state.myQQ ? '昵称已设置，QQ 绑定成功 🔒' : '昵称已设置，现在可以留言和点赞了 👤');
       }
       closeModal('modal-name');
       renderNameUI();
@@ -752,6 +759,7 @@
       try { await api('/api/visitor/logout', { token: state.vtoken }); } catch (e) { /* 忽略 */ }
     }
     state.me = '';
+    state.myQQ = '';
     state.vtoken = '';
     localStorage.removeItem('hana_wall_me');
     clearVtoken();

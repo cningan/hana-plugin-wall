@@ -542,11 +542,11 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, {"ok": True, "announcement": ann})
             return
         if path == "/api/visitor/me":
-            name = check_visitor(params.get("token", ""))
-            if not name:
+            info = get_visitor(params.get("token", ""))
+            if not info:
                 self._send(401, {"ok": False, "error": "未登录"})
                 return
-            self._send(200, {"ok": True, "name": name})
+            self._send(200, {"ok": True, "name": info.get("name"), "qq": info.get("qq", "")})
             return
         if path in ("/", "/index.html", "/favicon.svg"):
             rel = "index.html"
@@ -630,7 +630,8 @@ class Handler(BaseHTTPRequestHandler):
                         if qq and str(info.get("qq", "") or "").casefold() != qq.casefold():
                             info["qq"] = qq
                             save_json(VISITORS_FILE, visitors)
-                        self._send(200, {"ok": True, "token": t, "name": info.get("name", name)})
+                        self._send(200, {"ok": True, "token": t, "name": info.get("name", name),
+                                         "qq": info.get("qq", "")})
                         return
                 # ② QQ 验证登录（跨设备找回）：昵称 + 绑定 QQ 匹配 → 复用原身份，设备迁移到当前设备
                 if qq:
@@ -655,7 +656,8 @@ class Handler(BaseHTTPRequestHandler):
                             else:
                                 append_log("qq_login", 0, info.get("name", name), "QQ 验证登录（本设备）")
                             QQ_FAILS.pop(name_key, None)
-                            self._send(200, {"ok": True, "token": t, "name": info.get("name", name)})
+                            self._send(200, {"ok": True, "token": t, "name": info.get("name", name),
+                                             "qq": info.get("qq", "")})
                             return
                     if any(str(info.get("name", "")).casefold() == name_key for info in visitors.values()):
                         QQ_FAILS[name_key] = fails + [now_ts]
@@ -688,7 +690,8 @@ class Handler(BaseHTTPRequestHandler):
                     for t in sorted(visitors, key=lambda t: visitors[t].get("created_at", ""))[:len(visitors) - MAX_VISITORS]:
                         del visitors[t]
                 save_json(VISITORS_FILE, visitors)
-                self._send(200, {"ok": True, "token": token, "name": name})
+                self._send(200, {"ok": True, "token": token, "name": name,
+                                 "qq": new_info.get("qq", "")})
                 return
             if path == "/api/visitor/logout":
                 visitors = load_json(VISITORS_FILE, {})
