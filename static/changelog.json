@@ -1,7 +1,14 @@
 {
-  "updated_at": "2026-08-05 17:03",
-  "last_commit": "1d8dde13ab02bc72af70617ab0432e7e82f5d9b3",
+  "updated_at": "2026-08-05 17:30",
+  "last_commit": "13206086d3341317d4479ef86eecefdbbf8a4bb1",
   "versions": [
+    {
+      "version": "v11",
+      "date": "2026-08-05 17:30",
+      "items": [
+        "feat: 排序新增「我的」（发的/认领的/留言过的置顶+标记）；弹窗遮罩区分拖选与点击（按下在遮罩上且无选中才关闭）"
+      ]
+    },
     {
       "version": "v10",
       "date": "2026-08-05 17:03",
