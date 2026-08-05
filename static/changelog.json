@@ -1,7 +1,14 @@
 {
-  "updated_at": "2026-08-05 19:50",
-  "last_commit": "1a9bd8ec4607ebf15c809ccb9e8d5060f3d3e05f",
+  "updated_at": "2026-08-05 19:56",
+  "last_commit": "71a182a5c23b35f571f4b74b8611a08799677efe",
   "versions": [
+    {
+      "version": "v20",
+      "date": "2026-08-05 19:56",
+      "items": [
+        "feat: 管理员身份修复工具（指纹变化后把昵称改绑到新设备，原身份保留，解决同名无法登录）"
+      ]
+    },
     {
       "version": "v19",
       "date": "2026-08-05 19:50",
