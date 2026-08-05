@@ -913,6 +913,26 @@ main { max-width: 1080px; margin: 0 auto; padding: 24px; }
   gap: 8px;
 }
 
+/* ---------- 身份修复 ---------- */
+.field-form { display: flex; flex-direction: column; gap: 10px; }
+
+.field-hint {
+  font-size: 11.5px;
+  color: var(--text-dim);
+  margin-top: 2px;
+}
+
+.identity-result {
+  margin-top: 10px;
+  font-size: 12.5px;
+  border-radius: 8px;
+  padding: 8px 12px;
+  word-break: break-word;
+}
+
+.identity-result.ok { background: #f0f7ef; color: #2e7d32; border: 1px solid #2e7d32; }
+.identity-result.err { background: #f6e2de; color: #b0453a; border: 1px solid #b0453a; }
+
 /* ---------- 更新日志 ---------- */
 .changelog-list {
   max-height: 60vh;

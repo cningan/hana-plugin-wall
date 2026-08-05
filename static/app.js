@@ -1181,6 +1181,7 @@
     const changelogBtn = $('#btn-changelog');
     const pendingBtn = $('#btn-pending');
     const trashBtn = $('#btn-trash');
+    const identityBtn = $('#btn-identity');
     const managing = state.adminMode;
     if (logsBtn) logsBtn.classList.toggle('hidden', !managing);
     if (badge) badge.classList.toggle('hidden', !managing);
@@ -1188,6 +1189,7 @@
     if (changelogBtn) changelogBtn.classList.toggle('hidden', !state.vtoken);
     if (pendingBtn) pendingBtn.classList.toggle('hidden', !managing);
     if (trashBtn) trashBtn.classList.toggle('hidden', !managing);
+    if (identityBtn) identityBtn.classList.toggle('hidden', !managing);
     if (link) link.textContent = managing ? '⚙ 退出管理' : '⚙ 管理';
   }
 
@@ -1415,6 +1417,45 @@
     loadTrash();
   }
 
+  /* ---------- 身份修复（访客指纹变化后把昵称改绑到新设备） ---------- */
+
+  function openIdentity() {
+    $('#i-name').value = '';
+    $('#i-fp').value = state.fp;
+    $('#identity-result').classList.add('hidden');
+    openModal('modal-identity');
+    $('#i-name').focus();
+  }
+
+  async function submitIdentity(e) {
+    e.preventDefault();
+    const btn = $('#form-identity button[type="submit"]');
+    btn.disabled = true;
+    try {
+      const res = await api('/api/admin/visitors/rebind', {
+        token: state.token,
+        name: $('#i-name').value.trim(),
+        fp: $('#i-fp').value.trim() || state.fp,
+      });
+      const box = $('#identity-result');
+      box.classList.remove('hidden');
+      if (res.ok) {
+        box.className = 'identity-result ok';
+        box.innerHTML = `✅ 已把「<b>${esc(res.name)}</b>」改绑到当前设备。该用户现在输入这个昵称即可自动登录，原身份（👑/违规记录）全部保留。`;
+      } else {
+        box.className = 'identity-result err';
+        box.textContent = '❌ ' + (res.error || '操作失败');
+      }
+    } catch (err) {
+      const box = $('#identity-result');
+      box.classList.remove('hidden');
+      box.className = 'identity-result err';
+      box.textContent = '❌ ' + err.message;
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
   async function trashAction(tid, action) {
     if (action === 'purge' && !confirm('彻底删除后无法恢复，确定？')) return;
     if (action === 'clear' && !confirm('清空回收站？所有条目将被彻底删除，无法恢复。')) return;
@@ -1526,6 +1567,11 @@
     e.preventDefault();
     openTrash();
   });
+  on('#btn-identity', 'click', (e) => {
+    e.preventDefault();
+    openIdentity();
+  });
+  on('#form-identity', 'submit', submitIdentity);
   on('#pending-list', 'click', (e) => {
     const btn = e.target.closest('[data-pending-action]');
     if (!btn) return;

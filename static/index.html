@@ -22,6 +22,7 @@
       <span id="admin-badge" class="admin-badge hidden" title="点击退出管理模式">👑 管理员</span>
       <button id="btn-pending" class="btn btn-outline admin-entry hidden" title="没有待审内容">🔔 待审</button>
       <button id="btn-trash" class="btn btn-outline admin-entry hidden" title="删除的内容保留 7 天，可恢复">🗑 回收站</button>
+      <button id="btn-identity" class="btn btn-outline admin-entry hidden" title="访客清缓存后指纹变化，无法登录原昵称时，帮他把昵称改绑到当前设备">🔧 身份修复</button>
       <button id="btn-logs" class="btn btn-outline admin-entry hidden" title="查看操作日志">📜 日志</button>
       <button id="btn-changelog" class="btn btn-outline admin-entry hidden" title="查看版本更新记录">🆕 更新日志</button>
       <button id="btn-admin" class="btn btn-outline admin-entry" title="进入管理模式">⚙ 管理</button>
@@ -317,6 +318,30 @@
       <button type="button" id="btn-trash-clear" class="btn btn-outline danger">🧹 清空回收站</button>
     </div>
     <div id="trash-list" class="logs-list" style="margin-top:10px"></div>
+  </div>
+</div>
+
+<!-- 身份修复弹窗（仅管理模式可见）：访客清缓存后指纹变化，把昵称改绑到新设备 -->
+<div id="modal-identity" class="modal-mask hidden">
+  <div class="modal modal-small">
+    <div class="modal-head">
+      <h2>🔧 身份修复</h2>
+      <button class="btn-close" data-close="modal-identity">✕</button>
+    </div>
+    <p class="pending-desc">访客清缓存/换浏览器后设备指纹变化，输入原昵称会被当成"其他设备"拒绝。填昵称 + 新指纹，把该昵称改绑到新设备，原身份（👑 标记、违规记录）全部保留。</p>
+    <form id="form-identity" class="field-form">
+      <div class="field">
+        <label for="i-name">昵称</label>
+        <input id="i-name" maxlength="50" placeholder="如：李" required>
+      </div>
+      <div class="field">
+        <label for="i-fp">新设备指纹</label>
+        <input id="i-fp" maxlength="64" placeholder="留空 = 用当前设备指纹" required>
+        <small class="field-hint">通常留空即可（把昵称绑到你正在用的设备）</small>
+      </div>
+      <button type="submit" class="btn btn-primary btn-block">改绑到该设备</button>
+    </form>
+    <div id="identity-result" class="identity-result hidden"></div>
   </div>
 </div>
 

@@ -652,6 +652,35 @@ class Handler(BaseHTTPRequestHandler):
                     save_json(VISITORS_FILE, visitors)
                 self._send(200, {"ok": True})
                 return
+            if path == "/api/admin/visitors/rebind":
+                if not check_token(clean_text(data.get("token", ""), "token")):
+                    self._send(401, {"ok": False, "error": "未登录或登录已过期"})
+                    return
+                name = clean_text(data.get("name", ""), "name")
+                if not name:
+                    self._send(400, {"ok": False, "error": "请填写昵称"})
+                    return
+                fp = clean_text(data.get("fp", ""), "fp")
+                if not re.fullmatch(r"[0-9a-f]{8,64}", fp):
+                    self._send(400, {"ok": False, "error": "设备标识无效"})
+                    return
+                visitors = load_json(VISITORS_FILE, {})
+                name_key = name.casefold()
+                targets = [t for t, info in visitors.items()
+                           if str(info.get("name", "")).casefold() == name_key]
+                if not targets:
+                    self._send(404, {"ok": False, "error": "该昵称没有登录记录"})
+                    return
+                changed = False
+                for t in targets:
+                    if visitors[t].get("fp") != fp:
+                        visitors[t]["fp"] = fp
+                        changed = True
+                if changed:
+                    save_json(VISITORS_FILE, visitors)
+                    append_log("rebind", 0, name, f"身份修复：昵称改绑到设备 {fp[:8]}…")
+                self._send(200, {"ok": True, "name": name, "fp": fp, "count": len(targets)})
+                return
             m = re.match(r"^/api/admin/posts/(\d+)/edit$", path)
             if m:
                 if not check_token(clean_text(data.get("token", ""), "token")):
