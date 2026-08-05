@@ -21,6 +21,7 @@ $local = $PSScriptRoot
 # 白名单：只允许上传这些文件（数据文件绝不在此列）
 $files = @(
     "server.py",
+    "sensitive.txt",
     "static\app.js",
     "static\index.html",
     "static\style.css",

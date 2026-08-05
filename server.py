@@ -28,6 +28,7 @@ ADMINS_FILE = os.path.join(DATA_DIR, "admins.json")
 ANNOUNCEMENT_FILE = os.path.join(DATA_DIR, "announcement.json")
 STATIC_DIR = os.path.join(BASE_DIR, "static")
 SECRET_FILE = os.path.join(BASE_DIR, "secret.txt")
+SENSITIVE_FILE = os.path.join(BASE_DIR, "sensitive.txt")  # 敏感词库（本地化，一行一词）
 
 GROUP_NAME = "Hana 交流群"
 TOKENS = set()
@@ -81,6 +82,92 @@ def load_secret():
         except Exception:
             return ""
     return ""
+
+
+# ---------- 敏感词过滤（Trie 前缀树，纯标准库实现） ----------
+# 状态三态：normal（正常）/ pending（命中敏感词，待管理员审核）/ hidden（管理员屏蔽）
+
+TRIE = None
+END = "\x00"
+
+# 白名单：插件开发场景的高频正常词（词库来自腾讯游戏运营场景，混入了大量技术/运营词，
+# 命中这些直接忽略，避免误伤；管理员审核机制兜底漏检）
+DEFAULT_WHITELIST = {
+    "管理", "管里", "管理员", "服务管理", "服务器", "服务", "官方", "维护", "系统",
+    "系统公告", "公告", "客户服务", "客户", "客服", "服务天使", "助理", "辅助程序",
+    "测试", "游戏", "游戏管理员", "运营", "运营者", "运营组", "运营商", "运营长",
+    "运营官", "运营人", "审查", "巡查", "监督", "监管",
+    "http", "https", "com", ".com", "test", "admin", "system", "game", "master",
+    "gm", "client", "server", "cs", "kefu",
+}
+
+# URL 剥离：链接里的 http/.com 等垃圾词条不该触发拦截
+SENSITIVE_URL_RE = re.compile(r"https?://[^\s<>\"'()\[\]，。！？、；：《》]+")
+
+
+def load_sensitive():
+    """启动时加载敏感词库构建 Trie；跳过单字词（误伤率高）与空行，返回有效词条数"""
+    global TRIE
+    root = {}
+    count = 0
+    if not os.path.isfile(SENSITIVE_FILE):
+        TRIE = root
+        return 0
+    try:
+        with open(SENSITIVE_FILE, "r", encoding="utf-8") as f:
+            for line in f:
+                word = line.strip()
+                if len(word) < 2:
+                    continue
+                node = root
+                for ch in word:
+                    node = node.setdefault(ch, {})
+                node[END] = True
+                count += 1
+    except Exception:
+        root = {}
+        count = 0
+    TRIE = root
+    return count
+
+
+def find_sensitive(text):
+    """返回文本中命中的敏感词列表（去重，按首次出现顺序；URL 与白名单词不计）"""
+    if not TRIE or not text:
+        return []
+    text = SENSITIVE_URL_RE.sub(" ", text)
+    hits = []
+    seen = set()
+    n = len(text)
+    for start in range(n):
+        node = TRIE
+        for j in range(start, n):
+            ch = text[j]
+            if ch not in node:
+                break
+            node = node[ch]
+            if END in node:
+                word = text[start:j + 1]
+                if word not in seen:
+                    seen.add(word)
+                    hits.append(word)
+    return [w for w in hits if w.casefold() not in DEFAULT_WHITELIST]
+
+
+def item_status(item):
+    """兼容新旧数据：status 字段优先，旧数据 hidden=true 视为 hidden"""
+    if not item:
+        return "normal"
+    st = item.get("status")
+    if st in ("normal", "pending", "hidden"):
+        return st
+    return "hidden" if item.get("hidden") else "normal"
+
+
+def set_status(item, status):
+    """写 status 并清理旧 hidden 字段，保证双轨不并存"""
+    item["status"] = status
+    item.pop("hidden", None)
 
 
 def check_token(token):
@@ -292,12 +379,16 @@ class Handler(BaseHTTPRequestHandler):
             fp = params.get("fp", "")
             if not re.fullmatch(r"[0-9a-f]{8,64}", fp):
                 fp = ""
+            admin_view = check_token(params.get("token", ""))
             with LOCK:
                 posts = load_posts()
                 likes = load_json(LIKES_FILE, {})
                 vmap = visitor_map()
             posts.sort(key=lambda p: p.get("id", 0), reverse=True)
+            out = []
             for p in posts:
+                if not admin_view and item_status(p) != "normal":
+                    continue  # 待审/已屏蔽的帖子对访客整体隐藏，管理员全量可见
                 arr = likes.get(str(p.get("id")), [])
                 arr = [x if isinstance(x, dict) else {"fp": x, "name": ""} for x in arr]
                 p["like_count"] = len(arr)
@@ -316,9 +407,15 @@ class Handler(BaseHTTPRequestHandler):
                     if fp2 and fp2 in vmap:
                         c["name"] = vmap[fp2]["name"]
                         c["is_admin"] = vmap[fp2]["is_admin"]
-            self._send(200, {"ok": True, "posts": posts})
+                    if not admin_view:
+                        c.pop("sensitive", None)
+                if not admin_view:
+                    p.pop("sensitive", None)
+                out.append(p)
+            self._send(200, {"ok": True, "posts": out})
             return
         if path == "/api/wall":
+            admin_view = check_token(params.get("token", ""))
             with LOCK:
                 wall = load_json(WALL_FILE, [])
                 vmap = visitor_map()
@@ -328,6 +425,8 @@ class Handler(BaseHTTPRequestHandler):
                 if fp2 and fp2 in vmap:
                     m["name"] = vmap[fp2]["name"]
                     m["is_admin"] = vmap[fp2]["is_admin"]
+                if not admin_view:
+                    m.pop("sensitive", None)
             self._send(200, {"ok": True, "wall": wall})
             return
         if path == "/api/admin/logs":
@@ -342,6 +441,47 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(401, {"ok": False, "error": "未登录或登录已过期"})
                 return
             self._send(200, {"ok": True})
+            return
+        if path == "/api/admin/pending":
+            if not check_token(params.get("token", "")):
+                self._send(401, {"ok": False, "error": "未登录或登录已过期"})
+                return
+            with LOCK:
+                posts = load_posts()
+                wall = load_json(WALL_FILE, [])
+                vmap = visitor_map()
+            plist, clist, wlist = [], [], []
+            for p in posts:
+                if item_status(p) == "pending":
+                    plist.append({
+                        "kind": "post", "id": p.get("id"), "type": p.get("type"),
+                        "title": p.get("title", ""), "content": p.get("content", ""),
+                        "author": p.get("author") or "匿名", "sensitive": p.get("sensitive", []),
+                        "fp": p.get("fp") or "", "created_at": p.get("created_at", ""),
+                    })
+                for c in p.get("comments", []):
+                    if item_status(c) == "pending":
+                        clist.append({
+                            "kind": "comment", "pid": p.get("id"), "id": c.get("id"),
+                            "title": p.get("title", ""), "content": c.get("content", ""),
+                            "name": c.get("name") or "匿名", "sensitive": c.get("sensitive", []),
+                            "fp": c.get("fp") or "", "created_at": c.get("created_at", ""),
+                        })
+            for m in wall:
+                if item_status(m) == "pending":
+                    wlist.append({
+                        "kind": "wall", "id": m.get("id"), "content": m.get("content", ""),
+                        "name": m.get("name") or "匿名", "sensitive": m.get("sensitive", []),
+                        "fp": m.get("fp") or "", "created_at": m.get("created_at", ""),
+                    })
+            flags_by_fp = {}
+            for info in load_json(VISITORS_FILE, {}).values():
+                f = info.get("fp")
+                if f and info.get("flags"):
+                    flags_by_fp[f] = info["flags"]
+            for it in plist + clist + wlist:
+                it["flags"] = flags_by_fp.get(it.get("fp", ""), 0)
+            self._send(200, {"ok": True, "posts": plist, "comments": clist, "wall": wlist})
             return
         if path == "/api/announcement":
             ann = load_json(ANNOUNCEMENT_FILE, None)
@@ -485,6 +625,13 @@ class Handler(BaseHTTPRequestHandler):
                         else:
                             changes.append(f"{label}「{old[k]}」→「{post[k]}」")
                 append_log("edit", pid, post["title"], "；".join(changes) or "无字段变化")
+                words = find_sensitive(post["title"] + "\n" + post.get("content", ""))
+                if words:
+                    post["status"] = "pending"
+                    post["sensitive"] = words
+                else:
+                    post["status"] = "normal"
+                    post.pop("sensitive", None)
                 save_posts(posts)
                 self._send(200, {"ok": True, "post": post})
                 return
@@ -545,7 +692,9 @@ class Handler(BaseHTTPRequestHandler):
                     self._send(404, {"ok": False, "error": "留言不存在"})
                     return
                 hidden = bool(data.get("hidden"))
-                comment["hidden"] = hidden
+                set_status(comment, "hidden" if hidden else "normal")
+                if not hidden:
+                    comment.pop("sensitive", None)
                 who = comment.get("name") or "匿名"
                 content = comment.get("content", "")
                 if len(content) > 60:
@@ -555,6 +704,35 @@ class Handler(BaseHTTPRequestHandler):
                             else f"解除屏蔽留言（作者：{who}）内容：{content}"))
                 save_posts(posts)
                 self._send(200, {"ok": True, "hidden": hidden})
+                return
+            m = re.match(r"^/api/admin/posts/(\d+)/comments/(\d+)/review$", path)
+            if m:
+                if not check_token(clean_text(data.get("token", ""), "token")):
+                    self._send(401, {"ok": False, "error": "未登录或登录已过期"})
+                    return
+                pid = int(m.group(1))
+                cid = int(m.group(2))
+                post = next((p for p in posts if p["id"] == pid), None)
+                if post is None:
+                    self._send(404, {"ok": False, "error": "帖子不存在"})
+                    return
+                comment = next((c for c in post.get("comments", []) if c.get("id") == cid), None)
+                if comment is None:
+                    self._send(404, {"ok": False, "error": "留言不存在"})
+                    return
+                status = data.get("status")
+                if status not in ("normal", "hidden"):
+                    self._send(400, {"ok": False, "error": "status 只能是 normal 或 hidden"})
+                    return
+                set_status(comment, status)
+                if status == "normal":
+                    comment.pop("sensitive", None)
+                who = comment.get("name") or "匿名"
+                words = "、".join(comment.get("sensitive", [])) or "—"
+                append_log("review", pid, post.get("title", ""),
+                           f"审核帖子留言（作者：{who}，命中词：{words}）：{'放行' if status == 'normal' else '屏蔽'}")
+                save_posts(posts)
+                self._send(200, {"ok": True, "status": status})
                 return
             m = re.match(r"^/api/admin/wall/(\d+)/hide$", path)
             if m:
@@ -568,7 +746,9 @@ class Handler(BaseHTTPRequestHandler):
                     self._send(404, {"ok": False, "error": "留言不存在"})
                     return
                 hidden = bool(data.get("hidden"))
-                msg["hidden"] = hidden
+                set_status(msg, "hidden" if hidden else "normal")
+                if not hidden:
+                    msg.pop("sensitive", None)
                 who = msg.get("name") or "匿名"
                 content = msg.get("content", "")
                 if len(content) > 60:
@@ -578,6 +758,55 @@ class Handler(BaseHTTPRequestHandler):
                             else f"解除屏蔽留言（作者：{who}）内容：{content}"))
                 save_json(WALL_FILE, wall)
                 self._send(200, {"ok": True, "hidden": hidden})
+                return
+            m = re.match(r"^/api/admin/wall/(\d+)/review$", path)
+            if m:
+                if not check_token(clean_text(data.get("token", ""), "token")):
+                    self._send(401, {"ok": False, "error": "未登录或登录已过期"})
+                    return
+                mid = int(m.group(1))
+                wall = load_json(WALL_FILE, [])
+                msg = next((m0 for m0 in wall if m0.get("id") == mid), None)
+                if msg is None:
+                    self._send(404, {"ok": False, "error": "留言不存在"})
+                    return
+                status = data.get("status")
+                if status not in ("normal", "hidden"):
+                    self._send(400, {"ok": False, "error": "status 只能是 normal 或 hidden"})
+                    return
+                set_status(msg, status)
+                if status == "normal":
+                    msg.pop("sensitive", None)
+                who = msg.get("name") or "匿名"
+                words = "、".join(msg.get("sensitive", [])) or "—"
+                append_log("review", 0, "留言板",
+                           f"审核留言板留言（作者：{who}，命中词：{words}）：{'放行' if status == 'normal' else '屏蔽'}")
+                save_json(WALL_FILE, wall)
+                self._send(200, {"ok": True, "status": status})
+                return
+            m = re.match(r"^/api/admin/posts/(\d+)/review$", path)
+            if m:
+                if not check_token(clean_text(data.get("token", ""), "token")):
+                    self._send(401, {"ok": False, "error": "未登录或登录已过期"})
+                    return
+                pid = int(m.group(1))
+                post = next((p for p in posts if p["id"] == pid), None)
+                if post is None:
+                    self._send(404, {"ok": False, "error": "帖子不存在"})
+                    return
+                status = data.get("status")
+                if status not in ("normal", "hidden"):
+                    self._send(400, {"ok": False, "error": "status 只能是 normal 或 hidden"})
+                    return
+                set_status(post, status)
+                if status == "normal":
+                    post.pop("sensitive", None)
+                who = post.get("author") or "匿名"
+                words = "、".join(post.get("sensitive", [])) or "—"
+                append_log("review", pid, post.get("title", ""),
+                           f"审核帖子（作者：{who}，命中词：{words}）：{'放行' if status == 'normal' else '屏蔽'}")
+                save_posts(posts)
+                self._send(200, {"ok": True, "status": status})
                 return
             if path == "/api/admin/announcement":
                 if not check_token(clean_text(data.get("token", ""), "token")):
@@ -631,7 +860,17 @@ class Handler(BaseHTTPRequestHandler):
                     self._send(400, {"ok": False, "error": err})
                     return
                 post["author"] = visitor["name"]
+                post["fp"] = visitor.get("fp", "")
                 post["id"] = (posts[-1]["id"] + 1) if posts else 1
+                words = find_sensitive(post["title"] + "\n" + post["content"])
+                if words:
+                    post["status"] = "pending"
+                    post["sensitive"] = words
+                    visitors = load_json(VISITORS_FILE, {})
+                    tok = clean_text(data.get("token", ""), "token")
+                    if tok in visitors:
+                        visitors[tok]["flags"] = visitors[tok].get("flags", 0) + 1
+                        save_json(VISITORS_FILE, visitors)
                 posts.append(post)
                 save_posts(posts)
                 self._send(200, {"ok": True, "post": post})
@@ -697,16 +936,26 @@ class Handler(BaseHTTPRequestHandler):
                     self._send(400, {"ok": False, "error": "回复的留言不存在"})
                     return
                 mid = max((m.get("id", 0) for m in wall), default=0) + 1
-                wall.append({
+                message = {
                     "id": mid,
                     "name": name,
                     "fp": fp,
                     "content": content,
                     "reply_to": reply_to,
                     "created_at": now_str(),
-                })
+                }
+                words = find_sensitive(content)
+                if words:
+                    message["status"] = "pending"
+                    message["sensitive"] = words
+                    visitors = load_json(VISITORS_FILE, {})
+                    tok = clean_text(data.get("token", ""), "token")
+                    if tok in visitors:
+                        visitors[tok]["flags"] = visitors[tok].get("flags", 0) + 1
+                        save_json(VISITORS_FILE, visitors)
+                wall.append(message)
                 save_json(WALL_FILE, wall)
-                self._send(200, {"ok": True, "message": wall[-1]})
+                self._send(200, {"ok": True, "message": message})
                 return
             m = re.match(r"^/api/posts/(\d+)/comments$", path)
             if m:
@@ -734,14 +983,24 @@ class Handler(BaseHTTPRequestHandler):
                     self._send(400, {"ok": False, "error": "回复的留言不存在"})
                     return
                 cid = max((c.get("id", 0) for c in comments), default=0) + 1
-                comments.append({
+                comment = {
                     "id": cid,
                     "name": name,
                     "fp": fp,
                     "content": content,
                     "reply_to": reply_to,
                     "created_at": now_str(),
-                })
+                }
+                words = find_sensitive(content)
+                if words:
+                    comment["status"] = "pending"
+                    comment["sensitive"] = words
+                    visitors = load_json(VISITORS_FILE, {})
+                    tok = clean_text(data.get("token", ""), "token")
+                    if tok in visitors:
+                        visitors[tok]["flags"] = visitors[tok].get("flags", 0) + 1
+                        save_json(VISITORS_FILE, visitors)
+                comments.append(comment)
                 save_posts(posts)
                 self._send(200, {"ok": True, "post": post})
                 return
@@ -751,6 +1010,8 @@ class Handler(BaseHTTPRequestHandler):
 if __name__ == "__main__":
     os.makedirs(DATA_DIR, exist_ok=True)
     load_tokens()
+    n = load_sensitive()
+    print(f"敏感词库已加载：{SENSITIVE_FILE}（{n} 条有效词）")
     port = int(os.environ.get("PORT", "3000"))
     print(f"Hana 插件需求墙已启动：http://0.0.0.0:{port}（数据文件：{DATA_FILE}）")
     ThreadingHTTPServer(("0.0.0.0", port), Handler).serve_forever()
