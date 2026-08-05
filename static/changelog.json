@@ -1,7 +1,15 @@
 {
-  "updated_at": "2026-08-05 19:36",
-  "last_commit": "5e5b8c2181f4984436b10661143cd5cac11bfabf",
+  "updated_at": "2026-08-05 19:50",
+  "last_commit": "1a9bd8ec4607ebf15c809ccb9e8d5060f3d3e05f",
   "versions": [
+    {
+      "version": "v19",
+      "date": "2026-08-05 19:50",
+      "items": [
+        "perf: 静态文件加 ETag 缓存（文件未变 304 零下载，部署后自动失效）",
+        "feat: 同名自动登录（同设备复用原身份，改名继承管理员标记/违规计数，异设备同名拒绝）；登录凭证 localStorage+Cookie 双写兜底；退出登录 UI 同步修复"
+      ]
+    },
     {
       "version": "v18",
       "date": "2026-08-05 19:36",
