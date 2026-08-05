@@ -483,6 +483,8 @@
     if (state.view === 'home') {
       fillList($('#need-list'), needs, needCard);
       fillList($('#done-list'), dones, doneCard);
+    } else if (state.view === 'wall') {
+      renderWall();
     }
 
     const q = state.query.trim();
