@@ -721,7 +721,8 @@ main { max-width: 1080px; margin: 0 auto; padding: 24px; }
   margin-top: 8px;
 }
 
-.comment-form input {
+.comment-form input,
+.comment-form textarea {
   border: 1.5px solid var(--line);
   border-radius: 8px;
   background: var(--card);
@@ -734,7 +735,14 @@ main { max-width: 1080px; margin: 0 auto; padding: 24px; }
 .comment-form textarea:focus { outline: none; border-color: var(--accent); }
 
 .comment-name { width: 88px; flex-shrink: 0; }
-.comment-text { flex: 1; min-width: 0; resize: none; }
+.comment-text {
+  flex: 1;
+  min-width: 0;
+  resize: none;
+  height: 38px;
+  line-height: 22px;
+  overflow-y: auto;
+}
 
 .btn-small {
   border: none;
@@ -949,7 +957,8 @@ main { max-width: 1080px; margin: 0 auto; padding: 24px; }
   box-shadow: var(--shadow);
 }
 
-.wall-form input {
+.wall-form input,
+.wall-form textarea {
   border: 1.5px solid var(--line);
   border-radius: 8px;
   background: var(--card-soft);
@@ -962,7 +971,14 @@ main { max-width: 1080px; margin: 0 auto; padding: 24px; }
 .wall-form textarea:focus { outline: none; border-color: var(--accent); background: var(--card); }
 
 .wall-form #w-name { width: 130px; flex-shrink: 0; }
-.wall-form #w-content { flex: 1; min-width: 0; resize: vertical; }
+.wall-form #w-content {
+  flex: 1;
+  min-width: 0;
+  resize: none;
+  height: 42px;
+  line-height: 24px;
+  overflow-y: auto;
+}
 
 .wall-form .reply-badge { margin-top: 0; flex-shrink: 0; }
 

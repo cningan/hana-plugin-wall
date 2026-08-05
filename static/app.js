@@ -347,7 +347,7 @@
       <div class="comment-area" data-area="${post.id}">
         ${listHtml}
         <form class="comment-form" data-comment="${post.id}">
-          <textarea class="comment-text" rows="2" maxlength="200" placeholder="留言：我来做 / 有想法…（Enter 发送，Shift+Enter 换行）" required></textarea>
+          <textarea class="comment-text" rows="1" maxlength="200" placeholder="留言：我来做 / 有想法…（Enter 发送，Shift+Enter 换行）" required></textarea>
           <button type="button" class="img-btn" data-img-insert-el title="插入图片链接，自动显示为图片">🖼</button>
           <button class="btn-small" type="submit">留言</button>
         </form>
@@ -794,7 +794,16 @@
     const content = form.querySelector('.comment-text').value.trim();
     if (!content) return;
     const body = { token: state.vtoken, content };
-    if (state.reply.pid === id && state.reply.cid) body.reply_to = state.reply.cid;
+    if (state.reply.pid === id && state.reply.cid) {
+      const p = state.posts.find((x) => x.id === id);
+      const cs = (p && p.comments) || [];
+      const target = cs.find((x) => x.id === state.reply.cid);
+      if (target && commentDepth(target, cs.filter((x) => x.id != null), new Map()) >= 3) {
+        toast('回复链已达 4 层上限，本条已作为新楼发布 🏠');
+      } else {
+        body.reply_to = state.reply.cid;
+      }
+    }
     try {
       const res = await api(`/api/posts/${id}/comments`, body);
       if (!res.ok) throw new Error(res.error);
@@ -835,13 +844,21 @@
     e.preventDefault();
     if (!requireLogin()) return;
     const body = { token: state.vtoken, content: $('#w-content').value.trim() };
-    if (state.wallReply.cid) body.reply_to = state.wallReply.cid;
+    if (state.wallReply.cid) {
+      const target = state.wall.find((x) => x.id === state.wallReply.cid);
+      if (target && commentDepth(target, state.wall.filter((x) => x.id != null), new Map()) >= 3) {
+        toast('回复链已达 4 层上限，本条已作为新楼发布 🏠');
+      } else {
+        body.reply_to = state.wallReply.cid;
+      }
+    }
     const btn = $('#form-wall button[type="submit"]');
     btn.disabled = true;
     try {
       const res = await api('/api/wall', body);
       if (!res.ok) throw new Error(res.error);
       $('#w-content').value = '';
+      $('#w-content').style.height = '';
       clearWallReply();
       toast(res.message && res.message.status === 'pending'
         ? '留言成功，内容命中敏感词，待管理员审核 ⏳'
@@ -1410,6 +1427,18 @@
     const el = $(sel);
     if (el) el.addEventListener(evt, fn);
   }
+
+  function autoGrow(el) {
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = Math.min(el.scrollHeight, 120) + 'px';
+  }
+
+  document.addEventListener('input', (e) => {
+    if (e.target && (e.target.classList.contains('comment-text') || e.target.id === 'w-content')) {
+      autoGrow(e.target);
+    }
+  });
 
   on('#tab-home', 'click', () => switchView('home'));
   on('#tab-wall', 'click', () => switchView('wall'));
