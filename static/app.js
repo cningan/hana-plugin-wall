@@ -347,7 +347,7 @@
       <div class="comment-area" data-area="${post.id}">
         ${listHtml}
         <form class="comment-form" data-comment="${post.id}">
-          <input class="comment-text" maxlength="200" placeholder="留言：我来做 / 有想法…（🖼 按钮可插入图片）" required>
+          <textarea class="comment-text" rows="2" maxlength="200" placeholder="留言：我来做 / 有想法…（Enter 发送，Shift+Enter 换行）" required></textarea>
           <button type="button" class="img-btn" data-img-insert-el title="插入图片链接，自动显示为图片">🖼</button>
           <button class="btn-small" type="submit">留言</button>
         </form>
@@ -794,16 +794,7 @@
     const content = form.querySelector('.comment-text').value.trim();
     if (!content) return;
     const body = { token: state.vtoken, content };
-    if (state.reply.pid === id && state.reply.cid) {
-      const p = state.posts.find((x) => x.id === id);
-      const cs = (p && p.comments) || [];
-      const target = cs.find((x) => x.id === state.reply.cid);
-      if (target && commentDepth(target, cs.filter((x) => x.id != null), new Map()) >= 3) {
-        toast('回复链已达 4 层上限，已自动开新楼 🏠');
-      } else {
-        body.reply_to = state.reply.cid;
-      }
-    }
+    if (state.reply.pid === id && state.reply.cid) body.reply_to = state.reply.cid;
     try {
       const res = await api(`/api/posts/${id}/comments`, body);
       if (!res.ok) throw new Error(res.error);
@@ -844,14 +835,7 @@
     e.preventDefault();
     if (!requireLogin()) return;
     const body = { token: state.vtoken, content: $('#w-content').value.trim() };
-    if (state.wallReply.cid) {
-      const target = state.wall.find((x) => x.id === state.wallReply.cid);
-      if (target && commentDepth(target, state.wall.filter((x) => x.id != null), new Map()) >= 3) {
-        toast('回复链已达 4 层上限，已自动开新楼 🏠');
-      } else {
-        body.reply_to = state.wallReply.cid;
-      }
-    }
+    if (state.wallReply.cid) body.reply_to = state.wallReply.cid;
     const btn = $('#form-wall button[type="submit"]');
     btn.disabled = true;
     try {
@@ -1540,6 +1524,18 @@
   on('#form-admin', 'submit', submitAdmin);
   on('#form-edit', 'submit', submitEdit);
   on('#form-wall', 'submit', submitWall);
+  on('#w-content', 'keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      $('#form-wall').requestSubmit();
+    }
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey && e.target && e.target.classList.contains('comment-text')) {
+      e.preventDefault();
+      e.target.closest('.comment-form').requestSubmit();
+    }
+  });
   on('#wall-reply-badge', 'click', clearWallReply);
   on('#form-image', 'submit', submitImage);
   document.addEventListener('click', (e) => {
@@ -1573,7 +1569,7 @@
     const m = state.wall.find((x) => x.id === cid);
     if (m) {
       if (commentDepth(m, state.wall.filter((x) => x.id != null), new Map()) >= 3) {
-        toast('该回复链已达 4 层上限，回复将作为新楼发布 🏠');
+        toast('该回复链已达 4 层上限，建议开新楼回复 🏠');
       }
       setWallReply(cid, m.name);
     }
@@ -1635,7 +1631,7 @@
         if (c) {
           const cs = (p.comments || []).filter((x) => x.id != null);
           if (commentDepth(c, cs, new Map()) >= 3) {
-            toast('该回复链已达 4 层上限，回复将作为新楼发布 🏠');
+            toast('该回复链已达 4 层上限，建议开新楼回复 🏠');
           }
           setReply(pid, cid, c.name);
         }

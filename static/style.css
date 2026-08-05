@@ -731,10 +731,10 @@ main { max-width: 1080px; margin: 0 auto; padding: 24px; }
   padding: 7px 10px;
 }
 
-.comment-form input:focus { outline: none; border-color: var(--accent); }
+.comment-form textarea:focus { outline: none; border-color: var(--accent); }
 
 .comment-name { width: 88px; flex-shrink: 0; }
-.comment-text { flex: 1; min-width: 0; }
+.comment-text { flex: 1; min-width: 0; resize: none; }
 
 .btn-small {
   border: none;
@@ -959,10 +959,10 @@ main { max-width: 1080px; margin: 0 auto; padding: 24px; }
   padding: 8px 12px;
 }
 
-.wall-form input:focus { outline: none; border-color: var(--accent); background: var(--card); }
+.wall-form textarea:focus { outline: none; border-color: var(--accent); background: var(--card); }
 
 .wall-form #w-name { width: 130px; flex-shrink: 0; }
-.wall-form #w-content { flex: 1; min-width: 0; }
+.wall-form #w-content { flex: 1; min-width: 0; resize: vertical; }
 
 .wall-form .reply-badge { margin-top: 0; flex-shrink: 0; }
 
