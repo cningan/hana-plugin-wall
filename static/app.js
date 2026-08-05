@@ -233,8 +233,8 @@
     if (!state.adminMode) return '';
     const st = itemStatus(post);
     const reviewBtn = st === 'normal'
-      ? `<button class="admin-btn danger" data-review="${post.id}" title="屏蔽，访客不可见">⛔ 屏蔽</button>`
-      : `<button class="admin-btn" data-review="${post.id}" title="${st === 'pending' ? '审核通过，公开展示' : '恢复显示'}">✅ 放行</button>`;
+      ? `<button class="admin-btn warn" data-review="${post.id}" title="屏蔽，访客不可见">⛔ 屏蔽</button>`
+      : `<button class="admin-btn ok" data-review="${post.id}" title="${st === 'pending' ? '审核通过，公开展示' : '恢复显示'}">✅ 放行</button>`;
     const sinkBtn = post.sunk
       ? `<button class="admin-btn" data-unsink="${post.id}" title="恢复显示，回到正常排序">⬆ 恢复</button>`
       : `<button class="admin-btn" data-sink="${post.id}" title="沉底：不合理的卡片沉到最底部，带标识">⬇ 沉底</button>`;
@@ -272,9 +272,7 @@
     return '';
   }
 
-  function commentNodeHtml(c, all, byReplyTo, depth, pid) {
-    if (depth > 10) return '';
-    const kids = (byReplyTo.get(c.id) || []).map((k) => commentNodeHtml(k, all, byReplyTo, depth + 1, pid));
+  function commentNodeHtml(c, all, pid) {
     const parent = all.find((x) => x.id === c.reply_to);
     const adminCanSee = state.adminMode;
     const st = itemStatus(c);
@@ -292,39 +290,31 @@
     }
     const adminBtn = adminCanSee
       ? (st === 'normal'
-          ? `<button type="button" class="comment-reply-btn danger" data-hide="comment" data-cid="${c.id}" title="屏蔽后访客不可见，原地留痕">⛔ 屏蔽</button>`
-          : `<button type="button" class="comment-reply-btn" data-unhide="comment" data-cid="${c.id}" title="${st === 'pending' ? '审核通过，恢复显示' : '恢复显示'}">✅ 放行</button>`) +
-        `<button type="button" class="comment-reply-btn danger" data-del-comment data-cid="${c.id}" title="移入回收站（保留 7 天）">🗑</button>`
+          ? `<button type="button" class="comment-reply-btn warn" data-hide="comment" data-cid="${c.id}" title="屏蔽后访客不可见，原地留痕">⛔ 屏蔽</button>`
+          : `<button type="button" class="comment-reply-btn ok" data-unhide="comment" data-cid="${c.id}" title="${st === 'pending' ? '审核通过，恢复显示' : '恢复显示'}">✅ 放行</button>`) +
+        `<button type="button" class="comment-reply-btn danger" data-del-comment data-cid="${c.id}" title="移入回收站（保留 7 天）">🗑 删除</button>`
       : '';
     const replyBtn = (!hidden || adminCanSee)
       ? `<button type="button" class="comment-reply-btn" data-reply-btn="${c.id}">↩ 回复</button>` : '';
     return `
       <div class="comment${c.reply_to ? ' comment-reply' : ''}${hidden ? ' comment-hidden' : ''}">
         <b>${esc(c.name)}</b>${adminTag(c)}
-        ${parent ? `<span class="comment-ref">回复 ${esc(parent.name)}</span>` : ''}
+        ${parent ? `<span class="comment-ref" title="楼层 #${c.reply_to}">回复 ${esc(parent.name)}</span>` : ''}
         <span class="comment-time">${esc(c.created_at)}</span>
         ${body}
-        ${adminBtn}
-        ${replyBtn}
-        ${kids.join('')}
+        <div class="comment-actions">${adminBtn}${replyBtn}</div>
       </div>`;
   }
 
+  /* 评论平铺：不再嵌套"叠盒子"，按楼层顺序排列；回复用「回复 @名字」标签标识（适配旧数据 reply_to 结构） */
   function commentAreaHtml(post) {
     const comments = post.comments || [];
-    const withId = comments.filter((c) => c.id != null);
+    const withId = comments.filter((c) => c.id != null).sort((a, b) => a.id - b.id);
     const orphans = comments.filter((c) => c.id == null);
-    const byReplyTo = new Map();
-    withId.forEach((c) => {
-      const arr = byReplyTo.get(c.reply_to) || [];
-      arr.push(c);
-      byReplyTo.set(c.reply_to, arr);
-    });
-    const tops = withId.filter((c) => !c.reply_to || !withId.some((x) => x.id === c.reply_to));
-    const listHtml = (tops.length || orphans.length)
+    const listHtml = (withId.length || orphans.length)
       ? '<div class="comment-list">' +
-        orphans.map((c) => commentNodeHtml(c, [], new Map(), 0, post.id)).join('') +
-        tops.map((c) => commentNodeHtml(c, withId, byReplyTo, 0, post.id)).join('') +
+        orphans.map((c) => commentNodeHtml(c, withId, post.id)).join('') +
+        withId.map((c) => commentNodeHtml(c, withId, post.id)).join('') +
         '</div>'
       : '';
     return `
@@ -552,12 +542,8 @@
 
   /* ---------- 留言板渲染 ---------- */
 
-  function wallItemHtml(m, depth) {
-    if (depth > 10) return '';
-    const kids = state.wall
-      .filter((x) => x.reply_to === m.id)
-      .sort((a, b) => a.id - b.id)
-      .map((k) => wallItemHtml(k, (depth || 0) + 1)).join('');
+  /* 留言板平铺：按楼层顺序，回复用「回复 @名字」标签标识（不再嵌套叠盒子） */
+  function wallItemHtml(m) {
     const parent = state.wall.find((x) => x.id === m.reply_to);
     const adminCanSee = state.adminMode;
     const st = itemStatus(m);
@@ -575,30 +561,26 @@
     }
     const adminBtn = adminCanSee
       ? (st === 'normal'
-          ? `<button type="button" class="comment-reply-btn danger" data-hide="wall" data-cid="${m.id}" title="屏蔽后访客不可见，原地留痕">⛔ 屏蔽</button>`
-          : `<button type="button" class="comment-reply-btn" data-unhide="wall" data-cid="${m.id}" title="${st === 'pending' ? '审核通过，恢复显示' : '恢复显示'}">✅ 放行</button>`) +
-        `<button type="button" class="comment-reply-btn danger" data-del-wall data-cid="${m.id}" title="移入回收站（保留 7 天）">🗑</button>`
+          ? `<button type="button" class="comment-reply-btn warn" data-hide="wall" data-cid="${m.id}" title="屏蔽后访客不可见，原地留痕">⛔ 屏蔽</button>`
+          : `<button type="button" class="comment-reply-btn ok" data-unhide="wall" data-cid="${m.id}" title="${st === 'pending' ? '审核通过，恢复显示' : '恢复显示'}">✅ 放行</button>`) +
+        `<button type="button" class="comment-reply-btn danger" data-del-wall data-cid="${m.id}" title="移入回收站（保留 7 天）">🗑 删除</button>`
       : '';
     const replyBtn = (!hidden || adminCanSee)
       ? `<button type="button" class="comment-reply-btn" data-wall-reply="${m.id}">↩ 回复</button>` : '';
     return `
       <div class="wall-item${m.reply_to ? ' wall-reply' : ''}${hidden ? ' comment-hidden' : ''}">
         <b>${esc(m.name)}</b>${adminTag(m)}
-        ${parent ? `<span class="comment-ref">回复 ${esc(parent.name)}</span>` : ''}
+        ${parent ? `<span class="comment-ref" title="楼层 #${m.reply_to}">回复 ${esc(parent.name)}</span>` : ''}
         <span class="comment-time">${esc(m.created_at)}</span>
         ${body}
-        ${adminBtn}
-        ${replyBtn}
-        ${kids}
+        <div class="comment-actions">${adminBtn}${replyBtn}</div>
       </div>`;
   }
 
   function renderWall() {
     $('#count-wall').textContent = state.wall.length;
-    const tops = state.wall
-      .filter((m) => !m.reply_to || !state.wall.some((x) => x.id === m.reply_to))
-      .sort((a, b) => b.id - a.id);
-    $('#wall-list').innerHTML = tops.map(wallItemHtml).join('');
+    const items = state.wall.slice().sort((a, b) => b.id - a.id);
+    $('#wall-list').innerHTML = items.map(wallItemHtml).join('');
     $('#empty-wall').classList.toggle('hidden', state.wall.length > 0);
   }
 
@@ -965,8 +947,8 @@
         <p class="sensitive-hint">命中词：${it.sensitive.map((w) => `<b>${esc(w)}</b>`).join('、')}</p>
         ${flags}
         <div class="pending-actions">
-          <button type="button" class="comment-reply-btn" data-pending-action="normal" data-kind="${it.kind}" data-id="${it.id}" data-pid="${it.pid || ''}">✅ 放行</button>
-          <button type="button" class="comment-reply-btn danger" data-pending-action="hidden" data-kind="${it.kind}" data-id="${it.id}" data-pid="${it.pid || ''}">⛔ 屏蔽</button>
+          <button type="button" class="comment-reply-btn ok" data-pending-action="normal" data-kind="${it.kind}" data-id="${it.id}" data-pid="${it.pid || ''}">✅ 放行</button>
+          <button type="button" class="comment-reply-btn warn" data-pending-action="hidden" data-kind="${it.kind}" data-id="${it.id}" data-pid="${it.pid || ''}">⛔ 屏蔽</button>
           <button type="button" class="comment-reply-btn danger" data-pending-action="delete" data-kind="${it.kind}" data-id="${it.id}" data-pid="${it.pid || ''}" title="移入回收站（保留 7 天）">🗑 删除</button>
         </div>
       </div>`;
@@ -1319,7 +1301,7 @@
         ${d.title ? `<div class="pending-title">「${esc(d.title)}」</div>` : ''}
         <div class="pending-content">${renderText(String(preview).slice(0, 100), { noImages: true })}</div>
         <div class="pending-actions">
-          <button type="button" class="comment-reply-btn" data-trash-action="restore" data-tid="${t.tid}">↩ 恢复</button>
+          <button type="button" class="comment-reply-btn ok" data-trash-action="restore" data-tid="${t.tid}">↩ 恢复</button>
           <button type="button" class="comment-reply-btn danger" data-trash-action="purge" data-tid="${t.tid}">🗑 彻底删除</button>
         </div>
       </div>`;
