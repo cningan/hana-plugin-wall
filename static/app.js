@@ -272,7 +272,26 @@
     return '';
   }
 
-  function commentNodeHtml(c, all, pid) {
+  /* 评论嵌套深度计算（沿 reply_to 链向上数，顶层=0） */
+  function commentDepth(c, withId, cache) {
+    if (cache.has(c.id)) return cache.get(c.id);
+    const seen = new Set();
+    let d = 0;
+    let cur = c;
+    while (cur && cur.reply_to && withId.some((x) => x.id === cur.reply_to) && !seen.has(cur.reply_to)) {
+      seen.add(cur.reply_to);
+      d += 1;
+      cur = withId.find((x) => x.id === cur.reply_to);
+    }
+    cache.set(c.id, d);
+    return d;
+  }
+
+  /* 评论嵌套渲染（旧数据超深照旧嵌套展示；新回复由提交检查禁止超 4 层） */
+  function commentNodeHtml(c, all, byReplyTo, depth, pid) {
+    if (depth > 10) return '';
+    const kids = (byReplyTo.get(c.id) || [])
+      .map((k) => commentNodeHtml(k, all, byReplyTo, depth + 1, pid)).join('');
     const parent = all.find((x) => x.id === c.reply_to);
     const adminCanSee = state.adminMode;
     const st = itemStatus(c);
@@ -303,18 +322,25 @@
         <span class="comment-time">${esc(c.created_at)}</span>
         ${body}
         <div class="comment-actions">${adminBtn}${replyBtn}</div>
+        ${kids}
       </div>`;
   }
 
-  /* 评论平铺：不再嵌套"叠盒子"，按楼层顺序排列；回复用「回复 @名字」标签标识（适配旧数据 reply_to 结构） */
   function commentAreaHtml(post) {
     const comments = post.comments || [];
-    const withId = comments.filter((c) => c.id != null).sort((a, b) => a.id - b.id);
+    const withId = comments.filter((c) => c.id != null);
     const orphans = comments.filter((c) => c.id == null);
-    const listHtml = (withId.length || orphans.length)
+    const byReplyTo = new Map();
+    withId.forEach((c) => {
+      const arr = byReplyTo.get(c.reply_to) || [];
+      arr.push(c);
+      byReplyTo.set(c.reply_to, arr);
+    });
+    const tops = withId.filter((c) => !c.reply_to || !withId.some((x) => x.id === c.reply_to));
+    const listHtml = (tops.length || orphans.length)
       ? '<div class="comment-list">' +
-        orphans.map((c) => commentNodeHtml(c, withId, post.id)).join('') +
-        withId.map((c) => commentNodeHtml(c, withId, post.id)).join('') +
+        orphans.map((c) => commentNodeHtml(c, withId, byReplyTo, 0, post.id)).join('') +
+        tops.map((c) => commentNodeHtml(c, withId, byReplyTo, 0, post.id)).join('') +
         '</div>'
       : '';
     return `
@@ -542,9 +568,12 @@
 
   /* ---------- 留言板渲染 ---------- */
 
-  /* 留言板平铺：按楼层顺序，回复用「回复 @名字」标签标识（不再嵌套叠盒子） */
-  function wallItemHtml(m) {
-    const parent = state.wall.find((x) => x.id === m.reply_to);
+  /* 留言板嵌套渲染（旧数据超深照旧展示；新回复由提交检查禁止超 4 层） */
+  function wallItemHtml(m, withId, byReplyTo, depth) {
+    if (depth > 10) return '';
+    const kids = (byReplyTo.get(m.id) || [])
+      .map((k) => wallItemHtml(k, withId, byReplyTo, depth + 1)).join('');
+    const parent = withId.find((x) => x.id === m.reply_to);
     const adminCanSee = state.adminMode;
     const st = itemStatus(m);
     const hidden = st !== 'normal';
@@ -574,13 +603,23 @@
         <span class="comment-time">${esc(m.created_at)}</span>
         ${body}
         <div class="comment-actions">${adminBtn}${replyBtn}</div>
+        ${kids}
       </div>`;
   }
 
   function renderWall() {
     $('#count-wall').textContent = state.wall.length;
-    const items = state.wall.slice().sort((a, b) => b.id - a.id);
-    $('#wall-list').innerHTML = items.map(wallItemHtml).join('');
+    const withId = state.wall.filter((m) => m.id != null);
+    const byReplyTo = new Map();
+    withId.forEach((m) => {
+      const arr = byReplyTo.get(m.reply_to) || [];
+      arr.push(m);
+      byReplyTo.set(m.reply_to, arr);
+    });
+    const tops = withId
+      .filter((m) => !m.reply_to || !withId.some((x) => x.id === m.reply_to))
+      .sort((a, b) => b.id - a.id);
+    $('#wall-list').innerHTML = tops.map((m) => wallItemHtml(m, withId, byReplyTo, 0)).join('');
     $('#empty-wall').classList.toggle('hidden', state.wall.length > 0);
   }
 
@@ -755,7 +794,16 @@
     const content = form.querySelector('.comment-text').value.trim();
     if (!content) return;
     const body = { token: state.vtoken, content };
-    if (state.reply.pid === id && state.reply.cid) body.reply_to = state.reply.cid;
+    if (state.reply.pid === id && state.reply.cid) {
+      const p = state.posts.find((x) => x.id === id);
+      const cs = (p && p.comments) || [];
+      const target = cs.find((x) => x.id === state.reply.cid);
+      if (target && commentDepth(target, cs.filter((x) => x.id != null), new Map()) >= 3) {
+        toast('回复链已达 4 层上限，已自动开新楼 🏠');
+      } else {
+        body.reply_to = state.reply.cid;
+      }
+    }
     try {
       const res = await api(`/api/posts/${id}/comments`, body);
       if (!res.ok) throw new Error(res.error);
@@ -796,7 +844,14 @@
     e.preventDefault();
     if (!requireLogin()) return;
     const body = { token: state.vtoken, content: $('#w-content').value.trim() };
-    if (state.wallReply.cid) body.reply_to = state.wallReply.cid;
+    if (state.wallReply.cid) {
+      const target = state.wall.find((x) => x.id === state.wallReply.cid);
+      if (target && commentDepth(target, state.wall.filter((x) => x.id != null), new Map()) >= 3) {
+        toast('回复链已达 4 层上限，已自动开新楼 🏠');
+      } else {
+        body.reply_to = state.wallReply.cid;
+      }
+    }
     const btn = $('#form-wall button[type="submit"]');
     btn.disabled = true;
     try {
@@ -1516,7 +1571,12 @@
     if (!replyBtn) return;
     const cid = Number(replyBtn.dataset.wallReply);
     const m = state.wall.find((x) => x.id === cid);
-    if (m) setWallReply(cid, m.name);
+    if (m) {
+      if (commentDepth(m, state.wall.filter((x) => x.id != null), new Map()) >= 3) {
+        toast('该回复链已达 4 层上限，回复将作为新楼发布 🏠');
+      }
+      setWallReply(cid, m.name);
+    }
   });
 
   function bindList(selector) {
@@ -1572,7 +1632,13 @@
         const cid = Number(replyBtn.dataset.replyBtn);
         const p = state.posts.find((x) => x.id === pid);
         const c = p && p.comments ? p.comments.find((x) => x.id === cid) : null;
-        if (c) setReply(pid, cid, c.name);
+        if (c) {
+          const cs = (p.comments || []).filter((x) => x.id != null);
+          if (commentDepth(c, cs, new Map()) >= 3) {
+            toast('该回复链已达 4 层上限，回复将作为新楼发布 🏠');
+          }
+          setReply(pid, cid, c.name);
+        }
         return;
       }
       const openEl = e.target.closest('[data-open-detail]');
