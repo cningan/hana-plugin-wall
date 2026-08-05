@@ -19,6 +19,7 @@
     query: '',
     announcement: null,
     pendingCount: 0,
+    pendingItems: [],
   };
 
   /* 登录凭证双写：localStorage 优先，Cookie 兜底（部分清数据场景只清 localStorage，Cookie 可恢复） */
@@ -666,6 +667,9 @@
 
   function openNameModal() {
     $('#n-name').value = state.me;
+    $('#n-qq').value = '';
+    $('#name-tip').classList.add('hidden');
+    $('#btn-name-claim').classList.add('hidden');
     openModal('modal-name');
     $('#n-name').focus();
   }
@@ -714,8 +718,16 @@
       if (!name) {
         await logoutVisitor();
       } else {
-        const res = await api('/api/visitor/login', { name, fp: state.fp });
-        if (!res.ok) throw new Error(res.error);
+        const res = await api('/api/visitor/login', { name, fp: state.fp, qq: $('#n-qq').value.trim() });
+        if (!res.ok) {
+          if (res.claimable) {
+            $('#name-tip').textContent = '该昵称已被其他设备使用。绑定过 QQ 的话，填好 QQ 号再点保存即可找回；没绑定 QQ 可提交申请，管理员批准后即可登录。';
+            $('#name-tip').classList.remove('hidden');
+            $('#btn-name-claim').classList.remove('hidden');
+            return; // 保持弹窗打开，让用户补 QQ 或提交申请
+          }
+          throw new Error(res.error);
+        }
         state.me = res.name;
         state.vtoken = res.token;
         localStorage.setItem('hana_wall_me', res.name);
@@ -1017,10 +1029,25 @@
   /* ---------- 待审队列（敏感词自动拦截，需管理员审核） ---------- */
 
   function pendingKindLabel(kind) {
-    return { post: '📌 帖子', comment: '💬 评论', wall: '🗨 留言板' }[kind] || '';
+    return { post: '📌 帖子', comment: '💬 评论', wall: '🗨 留言板', claim: '🔧 找回申请' }[kind] || '';
   }
 
   function pendingItemHtml(it) {
+    if (it.kind === 'claim') {
+      return `
+      <div class="pending-item">
+        <div class="pending-head">
+          <span class="log-action review">🔧 找回申请</span>
+          <b>「${esc(it.name)}」</b>
+          <span class="comment-time">${esc(it.created_at)}</span>
+        </div>
+        <div class="pending-content">申请人设备指纹 ${esc(String(it.fp || '').slice(0, 8))}…。批准后该昵称改绑到这台设备，原身份（👑/违规记录）保留。</div>
+        <div class="pending-actions">
+          <button type="button" class="comment-reply-btn ok" data-claim-action="approve" data-id="${it.id}">✅ 批准</button>
+          <button type="button" class="comment-reply-btn danger" data-claim-action="reject" data-id="${it.id}">✕ 拒绝</button>
+        </div>
+      </div>`;
+    }
     const flags = it.flags > 0
       ? `<p class="sensitive-hint">🚩 该设备已违规 ${it.flags} 次</p>` : '';
     return `
@@ -1047,7 +1074,8 @@
     try {
       const res = await api('/api/admin/pending?token=' + encodeURIComponent(state.token));
       if (!res.ok) throw new Error(res.error);
-      const items = (res.posts || []).concat(res.comments || [], res.wall || []);
+      const items = (res.posts || []).concat(res.comments || [], res.wall || [], res.claims || []);
+      state.pendingItems = items;
       state.pendingCount = items.length;
       const btn = $('#btn-pending');
       if (btn) {
@@ -1264,7 +1292,7 @@
         list.innerHTML = res.logs.map((l) => `
           <div class="log-item">
             <div class="log-head">
-              <span class="log-action ${esc(l.action)}">${{ edit: '✏ 编辑', delete: '🗑 删除', sink: '⬇ 沉底', unsink: '⬆ 恢复', hide: '⛔ 屏蔽', unhide: '↩ 解除屏蔽', review: '✅ 审核', trash: '🗑 回收站', restore: '↩ 恢复', purge: '🔥 彻底删除', clear: '🧹 清空' }[l.action] || esc(l.action)}</span>
+              <span class="log-action ${esc(l.action)}">${{ edit: '✏ 编辑', delete: '🗑 删除', sink: '⬇ 沉底', unsink: '⬆ 恢复', hide: '⛔ 屏蔽', unhide: '↩ 解除屏蔽', review: '✅ 审核', trash: '🗑 回收站', restore: '↩ 恢复', purge: '🔥 彻底删除', clear: '🧹 清空', rebind: '🔧 改绑', claim_approve: '✅ 批准找回', claim_reject: '✕ 拒绝找回' }[l.action] || esc(l.action)}</span>
               <b>#${l.post_id}「${esc(l.title)}」</b>
               <span class="comment-time">${esc(l.time)}</span>
             </div>
@@ -1541,6 +1569,22 @@
     loadPosts();
     loadWall();
   });
+  on('#btn-name-claim', 'click', async () => {
+    const name = $('#n-name').value.trim();
+    if (!name) return;
+    const btn = $('#btn-name-claim');
+    btn.disabled = true;
+    try {
+      const c = await api('/api/visitor/claim', { name, fp: state.fp });
+      toast(c.ok ? '找回申请已提交，管理员批准后即可登录 📨' : '申请失败：' + (c.error || ''));
+      if (c.ok) {
+        $('#name-tip').classList.add('hidden');
+        btn.classList.add('hidden');
+      }
+    } finally {
+      btn.disabled = false;
+    }
+  });
   on('#btn-new-need', 'click', () => {
     if (!requireLogin()) return;
     resetNewForm('need');
@@ -1573,10 +1617,30 @@
   });
   on('#form-identity', 'submit', submitIdentity);
   on('#pending-list', 'click', (e) => {
+    const claimBtn = e.target.closest('[data-claim-action]');
+    if (claimBtn) {
+      claimAction(Number(claimBtn.dataset.id), claimBtn.dataset.claimAction);
+      return;
+    }
     const btn = e.target.closest('[data-pending-action]');
     if (!btn) return;
     reviewPending(btn.dataset.kind, Number(btn.dataset.id), Number(btn.dataset.pid || 0), btn.dataset.pendingAction);
   });
+
+  async function claimAction(id, action) {
+    if (action === 'approve') {
+      const item = (state.pendingItems || []).find((x) => x.kind === 'claim' && x.id === id);
+      if (!confirm(`批准后昵称「${item ? item.name : ''}」将改绑到申请人设备，原身份保留。确定？`)) return;
+    }
+    try {
+      const res = await api(`/api/admin/claims/${id}/${action}`, { token: state.token });
+      if (!res.ok) throw new Error(res.error);
+      toast(action === 'approve' ? '已批准，该昵称可登录了 ✅' : '已拒绝 ✕');
+      await loadPending();
+    } catch (err) {
+      toast('操作失败：' + err.message);
+    }
+  }
   on('#trash-list', 'click', (e) => {
     const btn = e.target.closest('[data-trash-action]');
     if (!btn) return;

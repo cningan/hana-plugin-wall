@@ -933,6 +933,19 @@ main { max-width: 1080px; margin: 0 auto; padding: 24px; }
 .identity-result.ok { background: #f0f7ef; color: #2e7d32; border: 1px solid #2e7d32; }
 .identity-result.err { background: #f6e2de; color: #b0453a; border: 1px solid #b0453a; }
 
+/* ---------- 昵称弹窗：同名冲突提示 ---------- */
+.name-tip {
+  margin: 4px 0 8px;
+  font-size: 12px;
+  color: #b26a00;
+  background: #fdf0d1;
+  border: 1px solid #f0d9a0;
+  border-radius: 8px;
+  padding: 6px 10px;
+}
+
+.claim-btn { margin-top: 6px; }
+
 /* ---------- 更新日志 ---------- */
 .changelog-list {
   max-height: 60vh;

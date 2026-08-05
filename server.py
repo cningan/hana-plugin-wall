@@ -30,6 +30,7 @@ STATIC_DIR = os.path.join(BASE_DIR, "static")
 SECRET_FILE = os.path.join(BASE_DIR, "secret.txt")
 SENSITIVE_FILE = os.path.join(BASE_DIR, "sensitive.txt")  # 敏感词库（本地化，一行一词）
 TRASH_FILE = os.path.join(DATA_DIR, "trash.json")  # 回收站（软删除，定期清理）
+CLAIMS_FILE = os.path.join(DATA_DIR, "claims.json")  # 昵称找回申请（访客提交，管理员审批）
 
 GROUP_NAME = "Hana 交流群"
 TOKENS = set()
@@ -53,6 +54,7 @@ MAX_LEN = {
     "wall_content": 500,
     "wall_name": 50,
     "announcement": 500,
+    "qq": 20,
 }
 
 MAX_LOG = 500  # 操作日志最多保留条数
@@ -519,7 +521,8 @@ class Handler(BaseHTTPRequestHandler):
                     flags_by_fp[f] = info["flags"]
             for it in plist + clist + wlist:
                 it["flags"] = flags_by_fp.get(it.get("fp", ""), 0)
-            self._send(200, {"ok": True, "posts": plist, "comments": clist, "wall": wlist})
+            claims = [c for c in load_json(CLAIMS_FILE, []) if c.get("status") == "pending"]
+            self._send(200, {"ok": True, "posts": plist, "comments": clist, "wall": wlist, "claims": claims})
             return
         if path == "/api/admin/trash":
             if not check_token(params.get("token", "")):
@@ -614,19 +617,35 @@ class Handler(BaseHTTPRequestHandler):
                 if not re.fullmatch(r"[0-9a-f]{8,64}", fp):
                     self._send(400, {"ok": False, "error": "设备标识无效"})
                     return
+                qq = clean_text(data.get("qq", ""), "qq")
                 visitors = load_json(VISITORS_FILE, {})
                 name_key = name.casefold()
+                # QQ 验证登录（跨设备找回）：昵称 + 绑定 QQ 匹配 → 复用原身份，设备迁移到当前设备
+                if qq:
+                    qq_key = qq.casefold()
+                    for t, info in visitors.items():
+                        if str(info.get("name", "")).casefold() == name_key and \
+                                info.get("qq") and str(info.get("qq", "")).casefold() == qq_key:
+                            if info.get("fp") != fp:
+                                info["fp"] = fp
+                                save_json(VISITORS_FILE, visitors)
+                            self._send(200, {"ok": True, "token": t, "name": info.get("name", name)})
+                            return
+                    if any(str(info.get("name", "")).casefold() == name_key for info in visitors.values()):
+                        self._send(409, {"ok": False, "error": "该昵称与 QQ 号不匹配", "claimable": True})
+                        return
                 # 同设备同名 → 自动登录：复用原 token，保留 is_admin/违规计数等身份信息
                 for t, info in visitors.items():
                     if info.get("fp") == fp and str(info.get("name", "")).casefold() == name_key:
                         self._send(200, {"ok": True, "token": t, "name": info.get("name", name)})
                         return
-                # 不同设备同名 → 拒绝（防冒名）
+                # 不同设备同名 → 拒绝（防冒名；访客可提交找回申请）
                 for info in visitors.values():
                     if info.get("fp") != fp and str(info.get("name", "")).casefold() == name_key:
-                        self._send(409, {"ok": False, "error": "该昵称已被其他设备使用；如是你本人，请回到原设备登录"})
+                        self._send(409, {"ok": False, "error": "该昵称已被其他设备使用；如是你本人，填入 QQ 号即可找回，或提交申请",
+                                         "claimable": True})
                         return
-                # 同设备改名 → 新身份，继承旧身份的 is_admin / 违规计数
+                # 同设备改名 → 新身份，继承旧身份的 is_admin / 违规计数 / QQ 绑定
                 old = {}
                 for t in [t for t, info in visitors.items() if info.get("fp") == fp]:
                     old = visitors[t]
@@ -637,6 +656,10 @@ class Handler(BaseHTTPRequestHandler):
                     new_info["is_admin"] = bool(old.get("is_admin"))
                     if old.get("flags"):
                         new_info["flags"] = old["flags"]
+                    if not qq and old.get("qq"):
+                        new_info["qq"] = old["qq"]
+                if qq:
+                    new_info["qq"] = qq
                 visitors[token] = new_info
                 if len(visitors) > MAX_VISITORS:
                     for t in sorted(visitors, key=lambda t: visitors[t].get("created_at", ""))[:len(visitors) - MAX_VISITORS]:
@@ -651,6 +674,36 @@ class Handler(BaseHTTPRequestHandler):
                     del visitors[token]
                     save_json(VISITORS_FILE, visitors)
                 self._send(200, {"ok": True})
+                return
+            if path == "/api/visitor/claim":
+                """访客找回申请：同名被拒后提交，管理员批准后把昵称改绑到申请人设备"""
+                name = clean_text(data.get("name", ""), "name")
+                fp = clean_text(data.get("fp", ""), "fp")
+                if not name:
+                    self._send(400, {"ok": False, "error": "请填写昵称"})
+                    return
+                if not re.fullmatch(r"[0-9a-f]{8,64}", fp):
+                    self._send(400, {"ok": False, "error": "设备标识无效"})
+                    return
+                visitors = load_json(VISITORS_FILE, {})
+                name_key = name.casefold()
+                targets = [info for info in visitors.values()
+                           if str(info.get("name", "")).casefold() == name_key]
+                if not targets:
+                    self._send(400, {"ok": False, "error": "该昵称没有登录记录，无需找回"})
+                    return
+                if all(info.get("fp") == fp for info in targets):
+                    self._send(400, {"ok": False, "error": "该昵称就是本设备，直接登录即可"})
+                    return
+                claims = load_json(CLAIMS_FILE, [])
+                if any(c.get("name", "").casefold() == name_key and c.get("status") == "pending" for c in claims):
+                    self._send(409, {"ok": False, "error": "已有待审批的找回申请，请等待管理员处理"})
+                    return
+                cid = max((c.get("id", 0) for c in claims), default=0) + 1
+                claims.append({"id": cid, "name": name, "fp": fp,
+                               "created_at": now_str(), "status": "pending"})
+                save_json(CLAIMS_FILE, claims)
+                self._send(200, {"ok": True, "id": cid})
                 return
             if path == "/api/admin/visitors/rebind":
                 if not check_token(clean_text(data.get("token", ""), "token")):
@@ -893,6 +946,41 @@ class Handler(BaseHTTPRequestHandler):
                     return
                 save_trash([])
                 append_log("clear", 0, "回收站", "清空回收站（全部彻底删除）")
+                self._send(200, {"ok": True})
+                return
+            m = re.match(r"^/api/admin/claims/(\d+)/(approve|reject)$", path)
+            if m:
+                if not check_token(clean_text(data.get("token", ""), "token")):
+                    self._send(401, {"ok": False, "error": "未登录或登录已过期"})
+                    return
+                cid = int(m.group(1))
+                action = m.group(2)
+                claims = load_json(CLAIMS_FILE, [])
+                claim = next((c for c in claims if c.get("id") == cid), None)
+                if claim is None:
+                    self._send(404, {"ok": False, "error": "申请不存在"})
+                    return
+                if action == "approve":
+                    visitors = load_json(VISITORS_FILE, {})
+                    name_key = claim.get("name", "").casefold()
+                    targets = [t for t, info in visitors.items()
+                               if str(info.get("name", "")).casefold() == name_key]
+                    if not targets:
+                        self._send(404, {"ok": False, "error": "该昵称的登录记录已不存在"})
+                        return
+                    changed = False
+                    for t in targets:
+                        if visitors[t].get("fp") != claim.get("fp"):
+                            visitors[t]["fp"] = claim["fp"]
+                            changed = True
+                    if changed:
+                        save_json(VISITORS_FILE, visitors)
+                    append_log("claim_approve", cid, claim.get("name", ""),
+                               f"批准找回申请（改绑到设备 {claim.get('fp', '')[:8]}…）")
+                else:
+                    append_log("claim_reject", cid, claim.get("name", ""), "拒绝找回申请")
+                claims.remove(claim)
+                save_json(CLAIMS_FILE, claims)
                 self._send(200, {"ok": True})
                 return
             m = re.match(r"^/api/admin/posts/(\d+)/sink$", path)

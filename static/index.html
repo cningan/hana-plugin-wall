@@ -169,8 +169,14 @@
         <label for="n-name">昵称（可随时修改）</label>
         <input id="n-name" type="text" maxlength="50" placeholder="群友怎么称呼你？">
       </div>
+      <div class="field">
+        <label for="n-qq">QQ 号（选填，绑定后可跨设备找回）</label>
+        <input id="n-qq" type="text" maxlength="20" placeholder="例如 123456789">
+      </div>
       <p class="field-hint">留言、点赞会自动带上昵称。清空保存或点「退出登录」即恢复浏览模式。</p>
+      <div id="name-tip" class="name-tip hidden"></div>
       <button type="submit" class="btn btn-primary btn-block">保存</button>
+      <button type="button" id="btn-name-claim" class="btn btn-outline btn-block claim-btn hidden">📨 提交找回申请</button>
       <button type="button" id="btn-name-logout" class="btn btn-outline btn-block logout-btn hidden">退出登录</button>
     </form>
   </div>
