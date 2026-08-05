@@ -553,8 +553,28 @@ class Handler(BaseHTTPRequestHandler):
             self._send(404, {"ok": False, "error": "Not Found"})
             return
         ctype = CONTENT_TYPES.get(os.path.splitext(fpath)[1], "application/octet-stream")
+        # ETag 缓存：文件未变时浏览器直接 304，省带宽（部署后新文件 mtime 变化自动失效）
+        try:
+            st = os.stat(fpath)
+            etag = '"%x-%x"' % (st.st_mtime_ns, st.st_size)
+        except OSError:
+            etag = ""
+        if etag and self.headers.get("If-None-Match") == etag:
+            self.send_response(304)
+            self.send_header("ETag", etag)
+            self.send_header("Cache-Control", "max-age=0, must-revalidate")
+            self.end_headers()
+            return
         with open(fpath, "rb") as f:
-            self._send(200, f.read(), ctype, cache=True)
+            body = f.read()
+        self.send_response(200)
+        self.send_header("Content-Type", ctype)
+        if etag:
+            self.send_header("ETag", etag)
+            self.send_header("Cache-Control", "max-age=0, must-revalidate")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
 
     def do_POST(self):
         path = urlparse(self.path).path
