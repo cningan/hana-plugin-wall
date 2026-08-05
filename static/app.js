@@ -12,6 +12,7 @@
     fp: getFingerprint(),
     me: localStorage.getItem('hana_wall_me') || '',
     myQQ: '',
+    isAdmin: false,
     vtoken: localStorage.getItem('hana_wall_vtoken') || readCookie('hw_vt') || '',
     reply: { pid: null, cid: null, name: '' },
     wallReply: { cid: null, name: '' },
@@ -653,38 +654,62 @@
     $('#empty-wall').classList.toggle('hidden', state.wall.length > 0);
   }
 
-  /* ---------- 游客昵称 / 登录 ---------- */
+  /* ---------- 账号登录 / 注册 ---------- */
 
   function renderNameUI() {
     $('#btn-name').textContent = '👤 ' + (state.me || '未登录');
     $('#btn-name-logout').classList.toggle('hidden', !state.vtoken);
+    if (state.isAdmin) $('#btn-name').textContent += ' 👑';
   }
 
   function requireLogin() {
     if (state.vtoken) return true;
-    toast('请先点击右上角「👤 未登录」设置昵称，才能发布、留言和点赞');
+    toast('请先点击右上角「👤 未登录」登录，才能发布、留言和点赞');
     return false;
   }
 
+  function switchAuthTab(tab) {
+    const isLogin = tab === 'login';
+    $('#tab-login').classList.toggle('active', isLogin);
+    $('#tab-reg').classList.toggle('active', !isLogin);
+    $('#form-login').classList.toggle('hidden', !isLogin);
+    $('#form-reg').classList.toggle('hidden', isLogin);
+    $('#login-tip').classList.add('hidden');
+    $('#reg-tip').classList.add('hidden');
+    (isLogin ? $('#n-qq') : $('#r-qq')).focus();
+  }
+
   function openNameModal() {
-    $('#n-name').value = state.me;
-    $('#n-qq').value = '';
-    $('#n-qq-tip').textContent = state.myQQ
-      ? '✅ 已绑定 QQ：' + esc(state.myQQ) + '（留空保存不改绑）'
-      : '未绑定 QQ。填 QQ 号保存即绑定，之后可凭昵称+QQ 跨设备登录找回';
-    $('#name-tip').classList.add('hidden');
-    $('#btn-name-claim').classList.add('hidden');
-    openModal('modal-name');
-    $('#n-name').focus();
+    $('#login-tip').classList.add('hidden');
+    $('#reg-tip').classList.add('hidden');
+    if (state.vtoken) {
+      $('#modal-name-title').textContent = '👤 我的账号';
+      $('#ac-qq').textContent = state.myQQ || '—';
+      $('#ac-admin').textContent = state.isAdmin ? '👑 管理员' : '';
+      $('#ac-name').value = state.me;
+      $('#account-tip').classList.add('hidden');
+      $('#account-panel').classList.remove('hidden');
+      $('#login-panel').classList.add('hidden');
+      openModal('modal-name');
+      $('#ac-name').focus();
+    } else {
+      $('#modal-name-title').textContent = '👤 账号登录';
+      $('#account-panel').classList.add('hidden');
+      $('#login-panel').classList.remove('hidden');
+      openModal('modal-name');
+      if ($('#n-qq').value) $('#n-pw').focus();
+      else $('#n-qq').focus();
+    }
   }
 
   async function checkMe() {
     if (!state.vtoken) return;
     try {
-      const res = await api('/api/visitor/me?token=' + encodeURIComponent(state.vtoken));
+      const res = await api('/api/user/me?token=' + encodeURIComponent(state.vtoken));
       if (res.ok) {
         state.me = res.name;
         state.myQQ = res.qq || '';
+        state.isAdmin = !!res.is_admin;
         localStorage.setItem('hana_wall_me', res.name);
         if (localStorage.getItem('hana_wall_vtoken') !== state.vtoken) {
           saveVtoken(state.vtoken); // Cookie 里恢复的凭证回写 localStorage
@@ -693,9 +718,10 @@
         state.vtoken = '';
         state.me = '';
         state.myQQ = '';
+        state.isAdmin = false;
         clearVtoken();
         localStorage.removeItem('hana_wall_me');
-        toast('登录凭证已失效，请重新设置昵称 👤');
+        toast('登录凭证已失效，请重新登录 👤');
       }
     } catch (e) { /* 忽略网络错误 */ }
     renderNameUI();
@@ -716,40 +742,90 @@
     render();
   }
 
-  async function saveName(e) {
+  function showTip(el, text) {
+    el.textContent = text;
+    el.classList.remove('hidden');
+  }
+
+  async function submitLogin(e) {
     e.preventDefault();
-    const btn = $('#form-name button[type="submit"]');
+    const btn = $('#form-login button[type="submit"]');
     btn.disabled = true;
     try {
-      const name = $('#n-name').value.trim();
-      if (!name) {
-        await logoutVisitor();
-      } else {
-        const res = await api('/api/visitor/login', { name, fp: state.fp, qq: $('#n-qq').value.trim() });
-        if (!res.ok) {
-          if (res.claimable) {
-            $('#name-tip').textContent = res.reason === 'qq_mismatch'
-              ? '该昵称与填写的 QQ 号不匹配，请确认后重试；也可提交找回申请（附上 QQ，管理员批准后自动绑定）'
-              : '该昵称已被其他设备使用。绑定过 QQ 的话，填好 QQ 号再点保存即可找回；没绑定 QQ 可提交申请（建议附上 QQ，批准后自动绑定），批准后即可登录。';
-            $('#name-tip').classList.remove('hidden');
-            $('#btn-name-claim').classList.remove('hidden');
-            return; // 保持弹窗打开，让用户补 QQ 或提交申请
-          }
-          throw new Error(res.error);
-        }
-        state.me = res.name;
-        state.vtoken = res.token;
-        state.myQQ = res.qq || '';
-        localStorage.setItem('hana_wall_me', res.name);
-        saveVtoken(res.token);
-        toast(state.myQQ ? '昵称已设置，QQ 绑定成功 🔒' : '昵称已设置，现在可以留言和点赞了 👤');
-      }
+      const res = await api('/api/user/login', {
+        qq: $('#n-qq').value.trim(),
+        password: $('#n-pw').value,
+        fp: state.fp,
+      });
+      if (!res.ok) throw new Error(res.error);
+      state.me = res.name;
+      state.vtoken = res.token;
+      state.myQQ = res.qq || '';
+      state.isAdmin = !!res.is_admin;
+      localStorage.setItem('hana_wall_me', res.name);
+      saveVtoken(res.token);
+      $('#n-pw').value = '';
+      toast('登录成功，欢迎回来 👋');
       closeModal('modal-name');
       renderNameUI();
       loadPosts();
       loadWall();
     } catch (err) {
-      toast('设置失败：' + err.message);
+      showTip($('#login-tip'), '❌ ' + err.message);
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  async function submitReg(e) {
+    e.preventDefault();
+    const btn = $('#form-reg button[type="submit"]');
+    btn.disabled = true;
+    try {
+      const res = await api('/api/user/register', {
+        qq: $('#r-qq').value.trim(),
+        password: $('#r-pw').value,
+        name: $('#r-name').value.trim(),
+        fp: state.fp,
+      });
+      if (!res.ok) throw new Error(res.error);
+      state.me = res.name;
+      state.vtoken = res.token;
+      state.myQQ = res.qq || '';
+      state.isAdmin = !!res.is_admin;
+      localStorage.setItem('hana_wall_me', res.name);
+      saveVtoken(res.token);
+      $('#r-qq').value = '';
+      $('#r-pw').value = '';
+      $('#r-name').value = '';
+      toast(res.inherited ? '注册成功，已继承旧身份 ✅' : '注册成功 🎉');
+      closeModal('modal-name');
+      renderNameUI();
+      loadPosts();
+      loadWall();
+    } catch (err) {
+      showTip($('#reg-tip'), '❌ ' + err.message);
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  async function saveRename(e) {
+    e.preventDefault();
+    const btn = $('#btn-ac-save');
+    btn.disabled = true;
+    try {
+      const name = $('#ac-name').value.trim();
+      const res = await api('/api/user/update', { token: state.vtoken, name });
+      if (!res.ok) throw new Error(res.error);
+      state.me = res.name;
+      localStorage.setItem('hana_wall_me', res.name);
+      showTip($('#account-tip'), '✅ 昵称已更新');
+      renderNameUI();
+      loadPosts();
+      loadWall();
+    } catch (err) {
+      showTip($('#account-tip'), '❌ ' + err.message);
     } finally {
       btn.disabled = false;
     }
@@ -757,14 +833,15 @@
 
   async function logoutVisitor() {
     if (state.vtoken) {
-      try { await api('/api/visitor/logout', { token: state.vtoken }); } catch (e) { /* 忽略 */ }
+      try { await api('/api/user/logout', { token: state.vtoken }); } catch (e) { /* 忽略 */ }
     }
     state.me = '';
     state.myQQ = '';
     state.vtoken = '';
+    state.isAdmin = false;
     localStorage.removeItem('hana_wall_me');
     clearVtoken();
-    toast('已退出，恢复浏览模式');
+    toast('已退出登录，恢复浏览模式');
   }
 
   /* ---------- 发帖 ---------- */
@@ -1040,25 +1117,10 @@
   /* ---------- 待审队列（敏感词自动拦截，需管理员审核） ---------- */
 
   function pendingKindLabel(kind) {
-    return { post: '📌 帖子', comment: '💬 评论', wall: '🗨 留言板', claim: '🔧 找回申请' }[kind] || '';
+    return { post: '📌 帖子', comment: '💬 评论', wall: '🗨 留言板' }[kind] || '';
   }
 
   function pendingItemHtml(it) {
-    if (it.kind === 'claim') {
-      return `
-      <div class="pending-item">
-        <div class="pending-head">
-          <span class="log-action review">🔧 找回申请</span>
-          <b>「${esc(it.name)}」</b>
-          <span class="comment-time">${esc(it.created_at)}</span>
-        </div>
-        <div class="pending-content">申请人设备指纹 ${esc(String(it.fp || '').slice(0, 8))}…${it.qq ? '，附 QQ：<b>' + esc(it.qq) + '</b>' : ''}。批准后该昵称改绑到这台设备${it.qq ? '并绑定该 QQ（之后可凭昵称+QQ 跨设备登录）' : ''}，原身份（👑/违规记录）保留。</div>
-        <div class="pending-actions">
-          <button type="button" class="comment-reply-btn ok" data-claim-action="approve" data-id="${it.id}">✅ 批准</button>
-          <button type="button" class="comment-reply-btn danger" data-claim-action="reject" data-id="${it.id}">✕ 拒绝</button>
-        </div>
-      </div>`;
-    }
     const flags = it.flags > 0
       ? `<p class="sensitive-hint">🚩 该设备已违规 ${it.flags} 次</p>` : '';
     return `
@@ -1085,7 +1147,7 @@
     try {
       const res = await api('/api/admin/pending?token=' + encodeURIComponent(state.token));
       if (!res.ok) throw new Error(res.error);
-      const items = (res.posts || []).concat(res.comments || [], res.wall || [], res.claims || []);
+      const items = (res.posts || []).concat(res.comments || [], res.wall || []);
       state.pendingItems = items;
       state.pendingCount = items.length;
       const btn = $('#btn-pending');
@@ -1306,7 +1368,7 @@
         list.innerHTML = res.logs.map((l) => `
           <div class="log-item">
             <div class="log-head">
-              <span class="log-action ${esc(l.action)}">${{ edit: '✏ 编辑', delete: '🗑 删除', sink: '⬇ 沉底', unsink: '⬆ 恢复', hide: '⛔ 屏蔽', unhide: '↩ 解除屏蔽', review: '✅ 审核', trash: '🗑 回收站', restore: '↩ 恢复', purge: '🔥 彻底删除', clear: '🧹 清空', rebind: '🔧 改绑', claim_approve: '✅ 批准找回', claim_reject: '✕ 拒绝找回' }[l.action] || esc(l.action)}</span>
+              <span class="log-action ${esc(l.action)}">${{ edit: '✏ 编辑', delete: '🗑 删除', sink: '⬇ 沉底', unsink: '⬆ 恢复', hide: '⛔ 屏蔽', unhide: '↩ 解除屏蔽', review: '✅ 审核', trash: '🗑 回收站', restore: '↩ 恢复', purge: '🔥 彻底删除', clear: '🧹 清空', register: '📝 注册', login: '🔑 登录', rename: '🏷 改名', reset_pw: '🔒 重置密码', set_admin: '👑 设置管理员' }[l.action] || esc(l.action)}</span>
               <b>#${l.post_id}「${esc(l.title)}」</b>
               <span class="comment-time">${esc(l.time)}</span>
             </div>
@@ -1459,40 +1521,59 @@
     loadTrash();
   }
 
-  /* ---------- 身份修复（访客指纹变化后把昵称改绑到新设备） ---------- */
+  /* ---------- 账号管理（重置密码 / 授予撤销管理员） ---------- */
 
-  function openIdentity() {
-    $('#i-name').value = '';
-    $('#i-fp').value = state.fp;
-    $('#identity-result').classList.add('hidden');
-    openModal('modal-identity');
-    $('#i-name').focus();
+  function showUsersResult(cls, html) {
+    const box = $('#users-result');
+    box.classList.remove('hidden');
+    box.className = 'identity-result ' + cls;
+    box.innerHTML = html;
   }
 
-  async function submitIdentity(e) {
+  function openUsers() {
+    $('#u-qq-reset').value = '';
+    $('#u-pw').value = '';
+    $('#u-qq-admin').value = '';
+    $('#u-admin').value = '1';
+    $('#users-result').classList.add('hidden');
+    openModal('modal-users');
+    $('#u-qq-reset').focus();
+  }
+
+  async function submitResetPw(e) {
     e.preventDefault();
-    const btn = $('#form-identity button[type="submit"]');
+    const btn = $('#form-reset-pw button[type="submit"]');
     btn.disabled = true;
     try {
-      const res = await api('/api/admin/visitors/rebind', {
+      const res = await api('/api/admin/user/reset_password', {
         token: state.token,
-        name: $('#i-name').value.trim(),
-        fp: $('#i-fp').value.trim() || state.fp,
+        qq: $('#u-qq-reset').value.trim(),
+        password: $('#u-pw').value,
       });
-      const box = $('#identity-result');
-      box.classList.remove('hidden');
-      if (res.ok) {
-        box.className = 'identity-result ok';
-        box.innerHTML = `✅ 已把「<b>${esc(res.name)}</b>」改绑到当前设备。该用户现在输入这个昵称即可自动登录，原身份（👑/违规记录）全部保留。`;
-      } else {
-        box.className = 'identity-result err';
-        box.textContent = '❌ ' + (res.error || '操作失败');
-      }
+      if (!res.ok) throw new Error(res.error);
+      showUsersResult('ok', `✅ 已重置 <b>${esc($('#u-qq-reset').value.trim())}</b> 的密码（该账号需重新登录）`);
+      $('#u-qq-reset').value = '';
+      $('#u-pw').value = '';
     } catch (err) {
-      const box = $('#identity-result');
-      box.classList.remove('hidden');
-      box.className = 'identity-result err';
-      box.textContent = '❌ ' + err.message;
+      showUsersResult('err', '❌ ' + (err.message || '操作失败'));
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  async function submitSetAdmin(e) {
+    e.preventDefault();
+    const btn = $('#form-set-admin button[type="submit"]');
+    btn.disabled = true;
+    try {
+      const qq = $('#u-qq-admin').value.trim();
+      const isAdmin = $('#u-admin').value === '1';
+      const res = await api('/api/admin/user/set_admin', { token: state.token, qq, is_admin: isAdmin });
+      if (!res.ok) throw new Error(res.error);
+      showUsersResult('ok', `✅ 已${isAdmin ? '授予' : '撤销'} <b>${esc(qq)}</b> 的管理员权限`);
+      $('#u-qq-admin').value = '';
+    } catch (err) {
+      showUsersResult('err', '❌ ' + (err.message || '操作失败'));
     } finally {
       btn.disabled = false;
     }
@@ -1574,7 +1655,11 @@
   });
 
   on('#btn-name', 'click', openNameModal);
-  on('#form-name', 'submit', saveName);
+  on('#form-login', 'submit', submitLogin);
+  on('#form-reg', 'submit', submitReg);
+  on('#btn-ac-save', 'click', saveRename);
+  on('#tab-login', 'click', () => switchAuthTab('login'));
+  on('#tab-reg', 'click', () => switchAuthTab('reg'));
   on('#btn-name-logout', 'click', async (e) => {
     e.preventDefault();
     await logoutVisitor();
@@ -1582,22 +1667,6 @@
     renderNameUI();
     loadPosts();
     loadWall();
-  });
-  on('#btn-name-claim', 'click', async () => {
-    const name = $('#n-name').value.trim();
-    if (!name) return;
-    const btn = $('#btn-name-claim');
-    btn.disabled = true;
-    try {
-      const c = await api('/api/visitor/claim', { name, fp: state.fp, qq: $('#n-qq').value.trim() });
-      toast(c.ok ? '找回申请已提交，管理员批准后即可登录 📨' : '申请失败：' + (c.error || ''));
-      if (c.ok) {
-        $('#name-tip').classList.add('hidden');
-        btn.classList.add('hidden');
-      }
-    } finally {
-      btn.disabled = false;
-    }
   });
   on('#btn-new-need', 'click', () => {
     if (!requireLogin()) return;
@@ -1627,34 +1696,15 @@
   });
   on('#btn-identity', 'click', (e) => {
     e.preventDefault();
-    openIdentity();
+    openUsers();
   });
-  on('#form-identity', 'submit', submitIdentity);
+  on('#form-reset-pw', 'submit', submitResetPw);
+  on('#form-set-admin', 'submit', submitSetAdmin);
   on('#pending-list', 'click', (e) => {
-    const claimBtn = e.target.closest('[data-claim-action]');
-    if (claimBtn) {
-      claimAction(Number(claimBtn.dataset.id), claimBtn.dataset.claimAction);
-      return;
-    }
     const btn = e.target.closest('[data-pending-action]');
     if (!btn) return;
     reviewPending(btn.dataset.kind, Number(btn.dataset.id), Number(btn.dataset.pid || 0), btn.dataset.pendingAction);
   });
-
-  async function claimAction(id, action) {
-    if (action === 'approve') {
-      const item = (state.pendingItems || []).find((x) => x.kind === 'claim' && x.id === id);
-      if (!confirm(`批准后昵称「${item ? item.name : ''}」将改绑到申请人设备，原身份保留。确定？`)) return;
-    }
-    try {
-      const res = await api(`/api/admin/claims/${id}/${action}`, { token: state.token });
-      if (!res.ok) throw new Error(res.error);
-      toast(action === 'approve' ? '已批准，该昵称可登录了 ✅' : '已拒绝 ✕');
-      await loadPending();
-    } catch (err) {
-      toast('操作失败：' + err.message);
-    }
-  }
   on('#trash-list', 'click', (e) => {
     const btn = e.target.closest('[data-trash-action]');
     if (!btn) return;

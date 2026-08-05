@@ -2,10 +2,12 @@
 """Hana 插件需求墙 - 单文件服务（仅用 Python 标准库，无第三方依赖）
 
 - 静态页面：static/ 目录
-- 数据存储：data.json / logs.json / likes.json / wall.json（默认同目录，可用 HANA_WALL_DATA_DIR 指定目录）
+- 数据存储：data.json / logs.json / likes.json / wall.json / users.json（默认同目录，可用 HANA_WALL_DATA_DIR 指定目录）
+- 账号体系：QQ 号 + 自设密码（pbkdf2 加盐哈希），旧游客数据（visitors.json）注册时按昵称继承
 - 端口：默认 3000，可用环境变量 PORT 覆盖
 """
 
+import hashlib
 import hmac
 import json
 import os
@@ -27,11 +29,11 @@ WALL_FILE = os.path.join(DATA_DIR, "wall.json")
 VISITORS_FILE = os.path.join(DATA_DIR, "visitors.json")
 ADMINS_FILE = os.path.join(DATA_DIR, "admins.json")
 ANNOUNCEMENT_FILE = os.path.join(DATA_DIR, "announcement.json")
+USERS_FILE = os.path.join(DATA_DIR, "users.json")  # QQ 账号体系：qq -> 用户记录（密码哈希+昵称+fp+is_admin+flags）
 STATIC_DIR = os.path.join(BASE_DIR, "static")
 SECRET_FILE = os.path.join(BASE_DIR, "secret.txt")
 SENSITIVE_FILE = os.path.join(BASE_DIR, "sensitive.txt")  # 敏感词库（本地化，一行一词）
 TRASH_FILE = os.path.join(DATA_DIR, "trash.json")  # 回收站（软删除，定期清理）
-CLAIMS_FILE = os.path.join(DATA_DIR, "claims.json")  # 昵称找回申请（访客提交，管理员审批）
 
 GROUP_NAME = "Hana 交流群"
 TOKENS = set()
@@ -61,9 +63,12 @@ MAX_LEN = {
 MAX_LOG = 500  # 操作日志最多保留条数
 MAX_VISITORS = 1000  # 游客账号最多保留数（超出删最早）
 TRASH_RETENTION_DAYS = 7  # 回收站保留天数，超期自动永久清理（懒清理：读取时）
-QQ_LOCK_WINDOW = 300  # QQ 验证失败限流窗口（秒，5 分钟）
-QQ_MAX_FAILS = 5  # 窗口内最多失败次数，超限锁定
-QQ_FAILS = {}  # 昵称小写 -> [失败时间戳]，QQ 验证登录防枚举
+LOGIN_LOCK_WINDOW = 300  # 登录失败限流窗口（秒，5 分钟）
+LOGIN_MAX_FAILS = 5  # 窗口内最多失败次数，超限锁定
+LOGIN_FAILS = {}  # qq -> [失败时间戳]，登录失败限流（防暴力破解）
+REGISTER_WINDOW = 3600  # 注册限流窗口（秒，1 小时）
+REGISTER_MAX = 3  # 同一设备指纹 1 小时内最多注册账号数
+REGISTER_TIMES = {}  # fp -> [注册时间戳]，防批量注册
 
 CONTENT_TYPES = {
     ".html": "text/html; charset=utf-8",
@@ -229,33 +234,119 @@ def save_tokens():
 
 
 def check_visitor(token):
-    """校验游客令牌，有效返回昵称，无效返回 None"""
-    if not token:
-        return None
-    visitors = load_json(VISITORS_FILE, {})
-    info = visitors.get(token)
+    """校验登录凭证，有效返回昵称，无效返回 None"""
+    info = get_visitor(token)
     return info.get("name") if info else None
 
 
 def get_visitor(token):
-    """校验游客令牌，有效返回记录 dict（含 fp/name），无效返回 None"""
+    """校验登录凭证，有效返回用户记录 dict（含 fp/name/is_admin），无效返回 None"""
     if not token:
         return None
-    visitors = load_json(VISITORS_FILE, {})
-    return visitors.get(token) or None
+    users = load_json(USERS_FILE, {})
+    for info in users.values():
+        if info.get("token") == token:
+            return info
+    return None
 
 
 def visitor_map():
     """设备指纹 -> {name, is_admin}（用于显示时归一化 + 管理员标签）"""
-    visitors = load_json(VISITORS_FILE, {})
+    users = load_json(USERS_FILE, {})
     m = {}
-    for info in visitors.values():
+    for info in users.values():
         if info.get("fp"):
             m[info["fp"]] = {
                 "name": info.get("name", ""),
                 "is_admin": bool(info.get("is_admin")),
             }
     return m
+
+
+# ---------- 账号体系（QQ + 自设密码，pbkdf2 加盐哈希） ----------
+
+QQ_RE = re.compile(r"^\d{5,15}$")  # QQ 号：5-15 位纯数字
+
+
+def hash_password(password):
+    """生成 (salt_hex, hash_hex)，pbkdf2_hmac sha256 20 万次迭代"""
+    salt = secrets.token_hex(16)
+    return salt, hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"),
+                                     bytes.fromhex(salt), 200_000).hex()
+
+
+def check_password(password, salt_hex, hash_hex):
+    try:
+        return hmac.compare_digest(
+            hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"),
+                                bytes.fromhex(salt_hex), 200_000).hex(),
+            hash_hex)
+    except (TypeError, ValueError):
+        return False
+
+
+def load_users():
+    return load_json(USERS_FILE, {})
+
+
+def save_users(users):
+    save_json(USERS_FILE, users)
+
+
+def find_user_by_qq(users, qq):
+    return users.get(qq)
+
+
+def user_login_limited(qq):
+    """登录失败限流：5 分钟 5 次失败后锁定"""
+    now_ts = time.time()
+    fails = [x for x in LOGIN_FAILS.get(qq, []) if now_ts - x < LOGIN_LOCK_WINDOW]
+    LOGIN_FAILS[qq] = fails
+    if len(fails) >= LOGIN_MAX_FAILS:
+        return True
+    return False
+
+
+def register_limited(fp):
+    """同一设备 1 小时内最多注册 REGISTER_MAX 个账号"""
+    now_ts = time.time()
+    times = [x for x in REGISTER_TIMES.get(fp, []) if now_ts - x < REGISTER_WINDOW]
+    REGISTER_TIMES[fp] = times
+    return len(times) >= REGISTER_MAX
+
+
+def claim_legacy_identity(fp, name, qq):
+    """注册时从旧游客数据（visitors.json）继承身份。
+
+    匹配规则（防止冒名顶替）：
+    - 旧记录绑定了 QQ：QQ 必须与注册 QQ 一致（昵称+QQ 双重验证）
+    - 旧记录没绑 QQ：当前设备指纹必须与旧记录一致
+    继承内容：is_admin（管理员标记）、flags（违规计数）、旧 fp（保持历史点赞/发帖关联）。
+    继承后删除对应旧游客记录，防止重复继承。
+    返回 (旧游客记录或 None, 是否发生继承)
+    """
+    visitors = load_json(VISITORS_FILE, {})
+    name_key = name.casefold()
+    matched = [info for info in visitors.values()
+               if str(info.get("name", "")).casefold() == name_key]
+    if not matched:
+        return None, False
+    target = None
+    qq_key = qq.casefold()
+    for info in matched:
+        old_qq = str(info.get("qq", "") or "")
+        if old_qq:
+            if old_qq.casefold() == qq_key:
+                target = info
+                break
+        elif info.get("fp") == fp:
+            target = info
+    if target is None:
+        return None, False
+    visitors = {t: info for t, info in visitors.items()
+                if str(info.get("name", "")).casefold() != name_key}
+    save_json(VISITORS_FILE, visitors)
+    return target, True
 
 
 def load_posts():
@@ -519,14 +610,13 @@ class Handler(BaseHTTPRequestHandler):
                         "fp": m.get("fp") or "", "created_at": m.get("created_at", ""),
                     })
             flags_by_fp = {}
-            for info in load_json(VISITORS_FILE, {}).values():
+            for info in load_json(USERS_FILE, {}).values():
                 f = info.get("fp")
                 if f and info.get("flags"):
                     flags_by_fp[f] = info["flags"]
             for it in plist + clist + wlist:
                 it["flags"] = flags_by_fp.get(it.get("fp", ""), 0)
-            claims = [dict(c, kind="claim") for c in load_json(CLAIMS_FILE, []) if c.get("status") == "pending"]
-            self._send(200, {"ok": True, "posts": plist, "comments": clist, "wall": wlist, "claims": claims})
+            self._send(200, {"ok": True, "posts": plist, "comments": clist, "wall": wlist})
             return
         if path == "/api/admin/trash":
             if not check_token(params.get("token", "")):
@@ -541,12 +631,13 @@ class Handler(BaseHTTPRequestHandler):
             ann = load_json(ANNOUNCEMENT_FILE, None)
             self._send(200, {"ok": True, "announcement": ann})
             return
-        if path == "/api/visitor/me":
+        if path == "/api/user/me":
             info = get_visitor(params.get("token", ""))
             if not info:
-                self._send(401, {"ok": False, "error": "未登录"})
+                self._send(401, {"ok": False, "error": "未登录或登录已过期"})
                 return
-            self._send(200, {"ok": True, "name": info.get("name"), "qq": info.get("qq", "")})
+            self._send(200, {"ok": True, "name": info.get("name"),
+                             "qq": info.get("qq", ""), "is_admin": bool(info.get("is_admin"))})
             return
         if path in ("/", "/index.html", "/favicon.svg"):
             rel = "index.html"
@@ -598,21 +689,19 @@ class Handler(BaseHTTPRequestHandler):
                     token = secrets.token_hex(16)
                     TOKENS.add(token)
                     save_tokens()
-                    fp = clean_text(data.get("fp", ""), "fp")
-                    if re.fullmatch(r"[0-9a-f]{8,64}", fp):
-                        visitors = load_json(VISITORS_FILE, {})
-                        changed = False
-                        for t, info in visitors.items():
-                            if info.get("fp") == fp:
-                                info["is_admin"] = True
-                                changed = True
-                        if changed:
-                            save_json(VISITORS_FILE, visitors)
                     self._send(200, {"ok": True, "token": token})
                 else:
                     self._send(403, {"ok": False, "error": "口令错误"})
                 return
-            if path == "/api/visitor/login":
+            if path == "/api/user/register":
+                qq = clean_text(data.get("qq", ""), "qq")
+                if not QQ_RE.fullmatch(qq):
+                    self._send(400, {"ok": False, "error": "QQ 号格式不正确（5-15 位数字）"})
+                    return
+                password = data.get("password", "")
+                if not isinstance(password, str) or len(password) < 6 or len(password) > 20:
+                    self._send(400, {"ok": False, "error": "密码长度需 6-20 位"})
+                    return
                 name = clean_text(data.get("name", ""), "name")
                 if not name:
                     self._send(400, {"ok": False, "error": "请填写昵称"})
@@ -621,145 +710,146 @@ class Handler(BaseHTTPRequestHandler):
                 if not re.fullmatch(r"[0-9a-f]{8,64}", fp):
                     self._send(400, {"ok": False, "error": "设备标识无效"})
                     return
-                qq = clean_text(data.get("qq", ""), "qq")
-                visitors = load_json(VISITORS_FILE, {})
-                name_key = name.casefold()
-                # ① 同设备同名 → 自动登录（复用原身份）；填了 QQ 视为补绑/改绑（本设备即是主人，无需再验证）
-                for t, info in visitors.items():
-                    if info.get("fp") == fp and str(info.get("name", "")).casefold() == name_key:
-                        if qq and str(info.get("qq", "") or "").casefold() != qq.casefold():
-                            info["qq"] = qq
-                            save_json(VISITORS_FILE, visitors)
-                        self._send(200, {"ok": True, "token": t, "name": info.get("name", name),
-                                         "qq": info.get("qq", "")})
-                        return
-                # ② QQ 验证登录（跨设备找回）：昵称 + 绑定 QQ 匹配 → 复用原身份，设备迁移到当前设备
-                if qq:
-                    now_ts = time.time()
-                    fails = [x for x in QQ_FAILS.get(name_key, []) if now_ts - x < QQ_LOCK_WINDOW]
-                    if len(fails) >= QQ_MAX_FAILS:
-                        self._send(429, {"ok": False, "error": "QQ 验证尝试过多，请 5 分钟后再试"})
-                        return
-                    for t, info in visitors.items():
-                        if str(info.get("name", "")).casefold() == name_key and \
-                                info.get("qq") and str(info.get("qq", "")).casefold() == qq.casefold():
-                            if bool(info.get("is_admin")):
-                                # 管理员不开放 QQ 验证登录（QQ 是公开弱秘密，防管理权限被窃取）
-                                QQ_FAILS[name_key] = fails + [now_ts]
-                                self._send(403, {"ok": False, "error": "管理员账号不支持 QQ 验证登录"})
-                                return
-                            if info.get("fp") != fp:
-                                append_log("qq_login", 0, info.get("name", name),
-                                           f"QQ 验证登录：设备迁移 {str(info.get('fp', ''))[:8]}… → {fp[:8]}…")
-                                info["fp"] = fp
-                                save_json(VISITORS_FILE, visitors)
-                            else:
-                                append_log("qq_login", 0, info.get("name", name), "QQ 验证登录（本设备）")
-                            QQ_FAILS.pop(name_key, None)
-                            self._send(200, {"ok": True, "token": t, "name": info.get("name", name),
-                                             "qq": info.get("qq", "")})
-                            return
-                    if any(str(info.get("name", "")).casefold() == name_key for info in visitors.values()):
-                        QQ_FAILS[name_key] = fails + [now_ts]
-                        self._send(409, {"ok": False, "error": "该昵称与 QQ 号不匹配，请确认后重试",
-                                         "reason": "qq_mismatch", "claimable": True})
-                        return
-                # ③ 不同设备同名 → 拒绝（防冒名；访客可提交找回申请）
-                for info in visitors.values():
-                    if info.get("fp") != fp and str(info.get("name", "")).casefold() == name_key:
-                        self._send(409, {"ok": False, "error": "该昵称已被其他设备使用；如是你本人，填入 QQ 号即可找回，或提交申请",
-                                         "reason": "other_device", "claimable": True})
-                        return
-                # 同设备改名 → 新身份，继承旧身份的 is_admin / 违规计数 / QQ 绑定
-                old = {}
-                for t in [t for t, info in visitors.items() if info.get("fp") == fp]:
-                    old = visitors[t]
-                    del visitors[t]
+                users = load_users()
+                if qq in users:
+                    self._send(409, {"ok": False, "error": "该 QQ 已注册，请直接登录"})
+                    return
+                if register_limited(fp):
+                    self._send(429, {"ok": False, "error": "本设备注册过于频繁，请 1 小时后再试"})
+                    return
+                # 昵称继承旧游客身份（visitors.json）：昵称+QQ 或 昵称+设备 双重匹配才算本人
+                legacy, inherited = claim_legacy_identity(fp, name, qq)
                 token = secrets.token_hex(16)
-                new_info = {"fp": fp, "name": name, "created_at": now_str()}
-                if old:
-                    new_info["is_admin"] = bool(old.get("is_admin"))
-                    if old.get("flags"):
-                        new_info["flags"] = old["flags"]
-                    if not qq and old.get("qq"):
-                        new_info["qq"] = old["qq"]
-                if qq:
-                    new_info["qq"] = qq
-                visitors[token] = new_info
-                if len(visitors) > MAX_VISITORS:
-                    for t in sorted(visitors, key=lambda t: visitors[t].get("created_at", ""))[:len(visitors) - MAX_VISITORS]:
-                        del visitors[t]
-                save_json(VISITORS_FILE, visitors)
-                self._send(200, {"ok": True, "token": token, "name": name,
-                                 "qq": new_info.get("qq", "")})
+                info = {
+                    "token": token,
+                    "name": name,
+                    "fp": (legacy.get("fp") or fp) if inherited else fp,
+                    "qq": qq,
+                    "salt": "", "pw": "",
+                    "is_admin": bool(legacy.get("is_admin")) if inherited else False,
+                    "flags": legacy.get("flags", 0) if inherited else 0,
+                    "created_at": now_str(),
+                }
+                if inherited:
+                    info["qq"] = legacy.get("qq") or qq  # 旧记录绑定的 QQ 优先（可能与注册 QQ 不同，但已双重验证）
+                info["salt"], info["pw"] = hash_password(password)
+                users[qq] = info
+                save_users(users)
+                if inherited:
+                    append_log("register", 0, name,
+                               f"注册账号 {info['qq']}，继承旧游客身份（👑={'是' if info['is_admin'] else '否'}，违规 {info['flags']} 次）")
+                else:
+                    append_log("register", 0, name, f"注册账号 {info['qq']}（无旧游客数据可继承）")
+                self._send(200, {"ok": True, "token": token, "name": info["name"],
+                                 "qq": info["qq"], "is_admin": info["is_admin"],
+                                 "inherited": inherited})
                 return
-            if path == "/api/visitor/logout":
-                visitors = load_json(VISITORS_FILE, {})
+            if path == "/api/user/login":
+                qq = clean_text(data.get("qq", ""), "qq")
+                password = data.get("password", "")
+                if not isinstance(password, str) or len(password) > 20:
+                    self._send(400, {"ok": False, "error": "请求格式错误"})
+                    return
+                if user_login_limited(qq):
+                    self._send(429, {"ok": False, "error": "登录失败尝试过多，请 5 分钟后再试"})
+                    return
+                users = load_users()
+                info = users.get(qq)
+                if info is None:
+                    LOGIN_FAILS.setdefault(qq, []).append(time.time())
+                    self._send(404, {"ok": False, "error": "该 QQ 未注册，请先注册"})
+                    return
+                if not check_password(password, info.get("salt", ""), info.get("pw", "")):
+                    LOGIN_FAILS.setdefault(qq, []).append(time.time())
+                    self._send(403, {"ok": False, "error": "密码错误"})
+                    return
+                LOGIN_FAILS.pop(qq, None)
+                fp = clean_text(data.get("fp", ""), "fp")
+                if not re.fullmatch(r"[0-9a-f]{8,64}", fp):
+                    self._send(400, {"ok": False, "error": "设备标识无效"})
+                    return
+                # 设备迁移：登录后当前设备成为该账号的主设备（点赞/发帖跟随）
+                if info.get("fp") != fp:
+                    append_log("login", 0, info.get("name", qq),
+                               f"登录：设备迁移 {str(info.get('fp', ''))[:8]}… → {fp[:8]}…")
+                    info["fp"] = fp
+                if not info.get("token"):
+                    info["token"] = secrets.token_hex(16)  # 该账号首个登录凭证
+                save_users(users)
+                self._send(200, {"ok": True, "token": info["token"], "name": info.get("name", qq),
+                                 "qq": info["qq"], "is_admin": bool(info.get("is_admin"))})
+                return
+            if path == "/api/user/logout":
+                users = load_users()
                 token = clean_text(data.get("token", ""), "token")
-                if token in visitors:
-                    del visitors[token]
-                    save_json(VISITORS_FILE, visitors)
+                for info in users.values():
+                    if info.get("token") == token:
+                        info["token"] = ""  # 凭证作废，其他设备同时下线（与旧游客体系行为一致）
+                        save_users(users)
+                        break
                 self._send(200, {"ok": True})
                 return
-            if path == "/api/visitor/claim":
-                """访客找回申请：同名被拒后提交，管理员批准后把昵称改绑到申请人设备；附 QQ 则批准时自动绑定"""
-                name = clean_text(data.get("name", ""), "name")
-                fp = clean_text(data.get("fp", ""), "fp")
-                if not name:
-                    self._send(400, {"ok": False, "error": "请填写昵称"})
-                    return
-                if not re.fullmatch(r"[0-9a-f]{8,64}", fp):
-                    self._send(400, {"ok": False, "error": "设备标识无效"})
-                    return
-                qq = clean_text(data.get("qq", ""), "qq")
-                visitors = load_json(VISITORS_FILE, {})
-                name_key = name.casefold()
-                targets = [info for info in visitors.values()
-                           if str(info.get("name", "")).casefold() == name_key]
-                if not targets:
-                    self._send(400, {"ok": False, "error": "该昵称没有登录记录，无需找回"})
-                    return
-                if all(info.get("fp") == fp for info in targets):
-                    self._send(400, {"ok": False, "error": "该昵称就是本设备，直接登录即可"})
-                    return
-                claims = load_json(CLAIMS_FILE, [])
-                if any(c.get("name", "").casefold() == name_key and c.get("status") == "pending" for c in claims):
-                    self._send(409, {"ok": False, "error": "已有待审批的找回申请，请等待管理员处理"})
-                    return
-                cid = max((c.get("id", 0) for c in claims), default=0) + 1
-                claims.append({"id": cid, "name": name, "fp": fp, "qq": qq,
-                               "created_at": now_str(), "status": "pending"})
-                save_json(CLAIMS_FILE, claims)
-                self._send(200, {"ok": True, "id": cid})
-                return
-            if path == "/api/admin/visitors/rebind":
-                if not check_token(clean_text(data.get("token", ""), "token")):
+            if path == "/api/user/update":
+                """修改昵称（仅限本人；登录态下随时可改）"""
+                info = get_visitor(clean_text(data.get("token", ""), "token"))
+                if not info:
                     self._send(401, {"ok": False, "error": "未登录或登录已过期"})
                     return
                 name = clean_text(data.get("name", ""), "name")
                 if not name:
-                    self._send(400, {"ok": False, "error": "请填写昵称"})
+                    self._send(400, {"ok": False, "error": "昵称不能为空"})
                     return
-                fp = clean_text(data.get("fp", ""), "fp")
-                if not re.fullmatch(r"[0-9a-f]{8,64}", fp):
-                    self._send(400, {"ok": False, "error": "设备标识无效"})
+                if info.get("name") != name:
+                    users = load_users()
+                    users[info["qq"]]["name"] = name
+                    save_users(users)
+                    append_log("rename", 0, name, f"修改昵称（账号 {info['qq']}）")
+                self._send(200, {"ok": True, "name": name})
+                return
+            if path == "/api/admin/user/reset_password":
+                """管理员重置指定 QQ 账号的密码（李的授权工具，找回密码走人工通道）"""
+                if not check_token(clean_text(data.get("token", ""), "token")):
+                    self._send(401, {"ok": False, "error": "未登录或登录已过期"})
                     return
-                visitors = load_json(VISITORS_FILE, {})
-                name_key = name.casefold()
-                targets = [t for t, info in visitors.items()
-                           if str(info.get("name", "")).casefold() == name_key]
-                if not targets:
-                    self._send(404, {"ok": False, "error": "该昵称没有登录记录"})
+                qq = clean_text(data.get("qq", ""), "qq")
+                password = data.get("password", "")
+                if not QQ_RE.fullmatch(qq):
+                    self._send(400, {"ok": False, "error": "QQ 号格式不正确"})
                     return
-                changed = False
-                for t in targets:
-                    if visitors[t].get("fp") != fp:
-                        visitors[t]["fp"] = fp
-                        changed = True
-                if changed:
-                    save_json(VISITORS_FILE, visitors)
-                    append_log("rebind", 0, name, f"身份修复：昵称改绑到设备 {fp[:8]}…")
-                self._send(200, {"ok": True, "name": name, "fp": fp, "count": len(targets)})
+                if not isinstance(password, str) or len(password) < 6 or len(password) > 20:
+                    self._send(400, {"ok": False, "error": "密码长度需 6-20 位"})
+                    return
+                users = load_users()
+                info = users.get(qq)
+                if info is None:
+                    self._send(404, {"ok": False, "error": "该 QQ 未注册"})
+                    return
+                info["salt"], info["pw"] = hash_password(password)
+                info["token"] = ""  # 重置后强制重新登录
+                save_users(users)
+                append_log("reset_pw", 0, info.get("name", qq), f"管理员重置密码（账号 {qq}）")
+                self._send(200, {"ok": True})
+                return
+            if path == "/api/admin/user/set_admin":
+                """管理员授权/撤销某账号的管理员标记（想当管理员需向李申请）"""
+                if not check_token(clean_text(data.get("token", ""), "token")):
+                    self._send(401, {"ok": False, "error": "未登录或登录已过期"})
+                    return
+                qq = clean_text(data.get("qq", ""), "qq")
+                if not QQ_RE.fullmatch(qq):
+                    self._send(400, {"ok": False, "error": "QQ 号格式不正确"})
+                    return
+                users = load_users()
+                info = users.get(qq)
+                if info is None:
+                    self._send(404, {"ok": False, "error": "该 QQ 未注册"})
+                    return
+                is_admin = bool(data.get("is_admin"))
+                info["is_admin"] = is_admin
+                save_users(users)
+                append_log("set_admin", 0, info.get("name", qq),
+                           f"{'授予' if is_admin else '撤销'}管理员（账号 {qq}）")
+                self._send(200, {"ok": True, "is_admin": is_admin})
                 return
             m = re.match(r"^/api/admin/posts/(\d+)/edit$", path)
             if m:
@@ -975,45 +1065,6 @@ class Handler(BaseHTTPRequestHandler):
                 append_log("clear", 0, "回收站", "清空回收站（全部彻底删除）")
                 self._send(200, {"ok": True})
                 return
-            m = re.match(r"^/api/admin/claims/(\d+)/(approve|reject)$", path)
-            if m:
-                if not check_token(clean_text(data.get("token", ""), "token")):
-                    self._send(401, {"ok": False, "error": "未登录或登录已过期"})
-                    return
-                cid = int(m.group(1))
-                action = m.group(2)
-                claims = load_json(CLAIMS_FILE, [])
-                claim = next((c for c in claims if c.get("id") == cid), None)
-                if claim is None:
-                    self._send(404, {"ok": False, "error": "申请不存在"})
-                    return
-                if action == "approve":
-                    visitors = load_json(VISITORS_FILE, {})
-                    name_key = claim.get("name", "").casefold()
-                    targets = [t for t, info in visitors.items()
-                               if str(info.get("name", "")).casefold() == name_key]
-                    if not targets:
-                        self._send(404, {"ok": False, "error": "该昵称的登录记录已不存在"})
-                        return
-                    changed = False
-                    for t in targets:
-                        if visitors[t].get("fp") != claim.get("fp"):
-                            visitors[t]["fp"] = claim["fp"]
-                            changed = True
-                        if claim.get("qq"):
-                            visitors[t]["qq"] = claim["qq"]
-                            changed = True
-                    if changed:
-                        save_json(VISITORS_FILE, visitors)
-                    qq_note = f"，绑定 QQ {claim.get('qq')}" if claim.get("qq") else ""
-                    append_log("claim_approve", cid, claim.get("name", ""),
-                               f"批准找回申请（改绑到设备 {claim.get('fp', '')[:8]}…{qq_note}）")
-                else:
-                    append_log("claim_reject", cid, claim.get("name", ""), "拒绝找回申请")
-                claims.remove(claim)
-                save_json(CLAIMS_FILE, claims)
-                self._send(200, {"ok": True})
-                return
             m = re.match(r"^/api/admin/posts/(\d+)/sink$", path)
             if m:
                 if not check_token(clean_text(data.get("token", ""), "token")):
@@ -1189,7 +1240,7 @@ class Handler(BaseHTTPRequestHandler):
                     return
                 visitor = get_visitor(clean_text(data.get("token", ""), "token"))
                 if not visitor:
-                    self._send(401, {"ok": False, "error": "请先设置昵称再认领"})
+                    self._send(401, {"ok": False, "error": "请先登录"})
                     return
                 fp = visitor.get("fp", "")
                 claim = post.get("claim")
@@ -1208,7 +1259,7 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/posts":
                 visitor = get_visitor(clean_text(data.get("token", ""), "token"))
                 if not visitor:
-                    self._send(401, {"ok": False, "error": "请先设置昵称再发布"})
+                    self._send(401, {"ok": False, "error": "请先登录"})
                     return
                 post, err = make_post(data)
                 if err:
@@ -1221,11 +1272,13 @@ class Handler(BaseHTTPRequestHandler):
                 if words:
                     post["status"] = "pending"
                     post["sensitive"] = words
-                    visitors = load_json(VISITORS_FILE, {})
-                    tok = clean_text(data.get("token", ""), "token")
-                    if tok in visitors:
-                        visitors[tok]["flags"] = visitors[tok].get("flags", 0) + 1
-                        save_json(VISITORS_FILE, visitors)
+                    uinfo = get_visitor(clean_text(data.get("token", ""), "token"))
+                    if uinfo and uinfo.get("qq"):
+                        users = load_users()
+                        u = users.get(uinfo["qq"])
+                        if u:
+                            u["flags"] = u.get("flags", 0) + 1
+                            save_users(users)
                 posts.append(post)
                 save_posts(posts)
                 self._send(200, {"ok": True, "post": post})
@@ -1243,7 +1296,7 @@ class Handler(BaseHTTPRequestHandler):
                     return
                 name = check_visitor(clean_text(data.get("token", ""), "token"))
                 if not name:
-                    self._send(401, {"ok": False, "error": "请先设置昵称再点赞"})
+                    self._send(401, {"ok": False, "error": "请先登录"})
                     return
                 likes = load_json(LIKES_FILE, {})
                 key = str(pid)
@@ -1274,7 +1327,7 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/wall":
                 visitor = get_visitor(clean_text(data.get("token", ""), "token"))
                 if not visitor:
-                    self._send(401, {"ok": False, "error": "请先设置昵称再留言"})
+                    self._send(401, {"ok": False, "error": "请先登录"})
                     return
                 name = visitor["name"]
                 fp = visitor.get("fp", "")
@@ -1303,11 +1356,13 @@ class Handler(BaseHTTPRequestHandler):
                 if words:
                     message["status"] = "pending"
                     message["sensitive"] = words
-                    visitors = load_json(VISITORS_FILE, {})
-                    tok = clean_text(data.get("token", ""), "token")
-                    if tok in visitors:
-                        visitors[tok]["flags"] = visitors[tok].get("flags", 0) + 1
-                        save_json(VISITORS_FILE, visitors)
+                    uinfo = get_visitor(clean_text(data.get("token", ""), "token"))
+                    if uinfo and uinfo.get("qq"):
+                        users = load_users()
+                        u = users.get(uinfo["qq"])
+                        if u:
+                            u["flags"] = u.get("flags", 0) + 1
+                            save_users(users)
                 wall.append(message)
                 save_json(WALL_FILE, wall)
                 self._send(200, {"ok": True, "message": message})
@@ -1321,7 +1376,7 @@ class Handler(BaseHTTPRequestHandler):
                     return
                 visitor = get_visitor(clean_text(data.get("token", ""), "token"))
                 if not visitor:
-                    self._send(401, {"ok": False, "error": "请先设置昵称再留言"})
+                    self._send(401, {"ok": False, "error": "请先登录"})
                     return
                 name = visitor["name"]
                 fp = visitor.get("fp", "")
@@ -1350,11 +1405,13 @@ class Handler(BaseHTTPRequestHandler):
                 if words:
                     comment["status"] = "pending"
                     comment["sensitive"] = words
-                    visitors = load_json(VISITORS_FILE, {})
-                    tok = clean_text(data.get("token", ""), "token")
-                    if tok in visitors:
-                        visitors[tok]["flags"] = visitors[tok].get("flags", 0) + 1
-                        save_json(VISITORS_FILE, visitors)
+                    uinfo = get_visitor(clean_text(data.get("token", ""), "token"))
+                    if uinfo and uinfo.get("qq"):
+                        users = load_users()
+                        u = users.get(uinfo["qq"])
+                        if u:
+                            u["flags"] = u.get("flags", 0) + 1
+                            save_users(users)
                 comments.append(comment)
                 save_posts(posts)
                 self._send(200, {"ok": True, "post": post})

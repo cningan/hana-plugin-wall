@@ -10,3 +10,5 @@ admins.json
 # Python
 __pycache__/
 *.pyc
+
+users.json

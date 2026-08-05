@@ -946,6 +946,40 @@ main { max-width: 1080px; margin: 0 auto; padding: 24px; }
 
 .claim-btn { margin-top: 6px; }
 
+/* ---------- 账号弹窗：登录/注册 Tab ---------- */
+.auth-tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 14px;
+  background: var(--card-soft);
+  border-radius: 10px;
+  padding: 4px;
+}
+
+.auth-tab {
+  flex: 1;
+  padding: 7px 0;
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.auth-tab.active {
+  background: var(--primary, #4a7dd6);
+  color: #fff;
+}
+
+.account-info {
+  padding: 8px 10px;
+  background: var(--card-soft);
+  border-radius: 8px;
+  font-size: 14px;
+  word-break: break-all;
+}
+
 /* ---------- 更新日志 ---------- */
 .changelog-list {
   max-height: 60vh;

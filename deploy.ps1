@@ -63,7 +63,7 @@ ssh $remote "systemctl restart hana-wall && sleep 2 && systemctl is-active hana-
 if ($LASTEXITCODE -ne 0) { Write-Output "[中止] 重启异常"; exit 1 }
 
 Write-Output "=== [4/6] 数据完整性 + 接口校验 ==="
-ssh $remote "echo '-- 数据 md5（备份 vs 现在，必须一致）--' && md5sum $backupDir/data.json $remoteDir/data.json && echo '-- 接口 --' && curl -s -o /dev/null -w '首页: %{http_code}\n' http://127.0.0.1:3000/ && curl -s -o /dev/null -w '静态文件(应200): %{http_code}\n' http://127.0.0.1:3000/static/app.js && curl -s -o /dev/null -w '游客校验无token(应401): %{http_code}\n' http://127.0.0.1:3000/api/visitor/me"
+ssh $remote "echo '-- 数据 md5（备份 vs 现在，必须一致）--' && md5sum $backupDir/data.json $remoteDir/data.json && echo '-- 接口 --' && curl -s -o /dev/null -w '首页: %{http_code}\n' http://127.0.0.1:3000/ && curl -s -o /dev/null -w '静态文件(应200): %{http_code}\n' http://127.0.0.1:3000/static/app.js && curl -s -o /dev/null -w '账号校验无token(应401): %{http_code}\n' http://127.0.0.1:3000/api/user/me"
 
 Write-Output ""
 Write-Output "部署完成。备份位置: $backupDir"

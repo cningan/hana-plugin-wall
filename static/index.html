@@ -22,11 +22,11 @@
       <span id="admin-badge" class="admin-badge hidden" title="点击退出管理模式">👑 管理员</span>
       <button id="btn-pending" class="btn btn-outline admin-entry hidden" title="没有待审内容">🔔 待审</button>
       <button id="btn-trash" class="btn btn-outline admin-entry hidden" title="删除的内容保留 7 天，可恢复">🗑 回收站</button>
-      <button id="btn-identity" class="btn btn-outline admin-entry hidden" title="访客清缓存后指纹变化，无法登录原昵称时，帮他把昵称改绑到当前设备">🔧 身份修复</button>
+      <button id="btn-identity" class="btn btn-outline admin-entry hidden" title="重置用户密码、授予/撤销管理员">🔧 账号管理</button>
       <button id="btn-logs" class="btn btn-outline admin-entry hidden" title="查看操作日志">📜 日志</button>
       <button id="btn-changelog" class="btn btn-outline admin-entry hidden" title="查看版本更新记录">🆕 更新日志</button>
       <button id="btn-admin" class="btn btn-outline admin-entry" title="进入管理模式">⚙ 管理</button>
-      <button id="btn-name" class="btn btn-outline name-btn" title="设置昵称，留言和点赞会自动带上">👤 匿名</button>
+      <button id="btn-name" class="btn btn-outline name-btn" title="登录后可以发帖、留言和点赞">👤 未登录</button>
     </div>
   </div>
 </header>
@@ -157,29 +157,63 @@
   </div>
 </div>
 
-<!-- 昵称弹窗 -->
+<!-- 账号弹窗（登录 / 注册 / 我的账号） -->
 <div id="modal-name" class="modal-mask hidden">
   <div class="modal modal-small">
     <div class="modal-head">
-      <h2>👤 我的昵称</h2>
+      <h2 id="modal-name-title">👤 账号登录</h2>
       <button class="btn-close" data-close="modal-name">✕</button>
     </div>
-    <form id="form-name">
+    <div id="account-panel" class="hidden">
       <div class="field">
-        <label for="n-name">昵称（可随时修改）</label>
-        <input id="n-name" type="text" maxlength="50" placeholder="群友怎么称呼你？">
+        <label>当前账号</label>
+        <div class="account-info">QQ：<b id="ac-qq"></b> <span id="ac-admin"></span></div>
       </div>
       <div class="field">
-        <label for="n-qq">QQ 号（选填，绑定后可跨设备找回）</label>
-        <input id="n-qq" type="text" maxlength="20" placeholder="例如 123456789">
-        <p id="n-qq-tip" class="field-hint"></p>
+        <label for="ac-name">昵称</label>
+        <input id="ac-name" type="text" maxlength="50" placeholder="群友怎么称呼你？">
       </div>
-      <p class="field-hint">留言、点赞会自动带上昵称。清空保存或点「退出登录」即恢复浏览模式。</p>
-      <div id="name-tip" class="name-tip hidden"></div>
-      <button type="submit" class="btn btn-primary btn-block">保存</button>
-      <button type="button" id="btn-name-claim" class="btn btn-outline btn-block claim-btn hidden">📨 提交找回申请</button>
-      <button type="button" id="btn-name-logout" class="btn btn-outline btn-block logout-btn hidden">退出登录</button>
-    </form>
+      <p class="field-hint">修改昵称即时生效，发帖、留言、点赞都会用新昵称。</p>
+      <div id="account-tip" class="name-tip hidden"></div>
+      <button type="button" id="btn-ac-save" class="btn btn-primary btn-block">保存昵称</button>
+      <button type="button" id="btn-name-logout" class="btn btn-outline btn-block logout-btn">退出登录</button>
+    </div>
+    <div id="login-panel">
+      <div class="auth-tabs">
+        <button type="button" id="tab-login" class="auth-tab active">登录</button>
+        <button type="button" id="tab-reg" class="auth-tab">注册</button>
+      </div>
+      <form id="form-login">
+        <div class="field">
+          <label for="n-qq">QQ 号</label>
+          <input id="n-qq" type="text" maxlength="20" placeholder="例如 123456789" required>
+        </div>
+        <div class="field">
+          <label for="n-pw">密码</label>
+          <input id="n-pw" type="password" maxlength="20" placeholder="6-20 位" required>
+        </div>
+        <p class="field-hint">忘记密码？联系管理员（李）人工重置。</p>
+        <div id="login-tip" class="name-tip hidden"></div>
+        <button type="submit" class="btn btn-primary btn-block">登录</button>
+      </form>
+      <form id="form-reg" class="hidden">
+        <div class="field">
+          <label for="r-qq">QQ 号</label>
+          <input id="r-qq" type="text" maxlength="20" placeholder="例如 123456789" required>
+        </div>
+        <div class="field">
+          <label for="r-pw">密码</label>
+          <input id="r-pw" type="password" maxlength="20" placeholder="6-20 位" required>
+        </div>
+        <div class="field">
+          <label for="r-name">昵称</label>
+          <input id="r-name" type="text" maxlength="50" placeholder="群友怎么称呼你？" required>
+        </div>
+        <p class="field-hint">注册时填的昵称若与旧游客身份一致（昵称+QQ 匹配），会自动继承原身份（👑 标记 / 违规记录 / 历史点赞）。</p>
+        <div id="reg-tip" class="name-tip hidden"></div>
+        <button type="submit" class="btn btn-primary btn-block">注册</button>
+      </form>
+    </div>
   </div>
 </div>
 
@@ -328,27 +362,41 @@
   </div>
 </div>
 
-<!-- 身份修复弹窗（仅管理模式可见）：访客清缓存后指纹变化，把昵称改绑到新设备 -->
-<div id="modal-identity" class="modal-mask hidden">
+<!-- 账号管理弹窗（仅管理模式可见）：重置密码 / 授予撤销管理员 -->
+<div id="modal-users" class="modal-mask hidden">
   <div class="modal modal-small">
     <div class="modal-head">
-      <h2>🔧 身份修复</h2>
-      <button class="btn-close" data-close="modal-identity">✕</button>
+      <h2>🔧 账号管理</h2>
+      <button class="btn-close" data-close="modal-users">✕</button>
     </div>
-    <p class="pending-desc">访客清缓存/换浏览器后设备指纹变化，输入原昵称会被当成"其他设备"拒绝。填昵称 + 新指纹，把该昵称改绑到新设备，原身份（👑 标记、违规记录）全部保留。</p>
-    <form id="form-identity" class="field-form">
+    <p class="pending-desc">管理员的授权工具：重置密码（用户忘记密码走人工找回）、授予/撤销管理员（想当管理员需向李申请）。</p>
+    <form id="form-reset-pw" class="field-form">
       <div class="field">
-        <label for="i-name">昵称</label>
-        <input id="i-name" maxlength="50" placeholder="如：李" required>
+        <label for="u-qq-reset">QQ 号</label>
+        <input id="u-qq-reset" maxlength="20" placeholder="例如 123456789" required>
       </div>
       <div class="field">
-        <label for="i-fp">新设备指纹</label>
-        <input id="i-fp" maxlength="64" placeholder="留空 = 用当前设备指纹" required>
-        <small class="field-hint">通常留空即可（把昵称绑到你正在用的设备）</small>
+        <label for="u-pw">新密码</label>
+        <input id="u-pw" type="password" maxlength="20" placeholder="6-20 位，重置后需重新登录" required>
       </div>
-      <button type="submit" class="btn btn-primary btn-block">改绑到该设备</button>
+      <button type="submit" class="btn btn-primary btn-block">重置该账号密码</button>
     </form>
-    <div id="identity-result" class="identity-result hidden"></div>
+    <hr>
+    <form id="form-set-admin" class="field-form">
+      <div class="field">
+        <label for="u-qq-admin">QQ 号</label>
+        <input id="u-qq-admin" maxlength="20" placeholder="例如 123456789" required>
+      </div>
+      <div class="field">
+        <label for="u-admin">权限</label>
+        <select id="u-admin">
+          <option value="1">授予管理员</option>
+          <option value="0">撤销管理员</option>
+        </select>
+      </div>
+      <button type="submit" class="btn btn-primary btn-block">保存</button>
+    </form>
+    <div id="users-result" class="identity-result hidden"></div>
   </div>
 </div>
 
