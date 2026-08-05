@@ -1,7 +1,14 @@
 {
-  "updated_at": "2026-08-05 16:56",
-  "last_commit": "64fe9301ce0124c7a6f9d98361bdc7c96cd1fca9",
+  "updated_at": "2026-08-05 17:03",
+  "last_commit": "1d8dde13ab02bc72af70617ab0432e7e82f5d9b3",
   "versions": [
+    {
+      "version": "v10",
+      "date": "2026-08-05 17:03",
+      "items": [
+        "fix: 留言板视图内切换管理状态立即刷新列表（render 同步渲染当前视图）"
+      ]
+    },
     {
       "version": "v9",
       "date": "2026-08-05 16:56",
