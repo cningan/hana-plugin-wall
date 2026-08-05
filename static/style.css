@@ -832,6 +832,8 @@ main { max-width: 1080px; margin: 0 auto; padding: 24px; }
 /* ---------- 操作日志 ---------- */
 .logs-list { display: flex; flex-direction: column; gap: 10px; }
 
+.logs-list.grid-auto { display: grid; }
+
 .log-item {
   background: var(--card-soft);
   border: 1px solid var(--line);
@@ -948,10 +950,10 @@ main { max-width: 1080px; margin: 0 auto; padding: 24px; }
 
 /* ---------- 账号管理：账号列表 ---------- */
 .users-list {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(430px, 1fr));
   gap: 10px;
-  max-height: 55vh;
+  max-height: 60vh;
   overflow-y: auto;
 }
 
@@ -1049,7 +1051,7 @@ main { max-width: 1080px; margin: 0 auto; padding: 24px; }
 
 /* ---------- 更新日志 ---------- */
 .changelog-list {
-  max-height: 60vh;
+  max-height: 70vh;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
@@ -1214,6 +1216,15 @@ footer a:hover { color: var(--accent); border-color: var(--accent); }
 }
 
 .modal-small { max-width: 380px; }
+.modal-lg { max-width: 900px; }
+.modal-xl { max-width: 1180px; }
+
+/* 自适应多列网格：信息量增加时自动 1 列 → 2 列 → 3 列，窄屏自动回退单列 */
+.grid-auto {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(420px, 1fr));
+  gap: 10px;
+}
 
 @keyframes pop {
   from { opacity: 0; transform: scale(.97) translateY(8px); }
