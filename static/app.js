@@ -22,7 +22,7 @@
 
   function loadSort(key) {
     const v = localStorage.getItem(key);
-    return v === 'time' || v === 'likes' || v === 'comments' ? v : 'likes';
+    return v === 'time' || v === 'likes' || v === 'comments' || v === 'mine' ? v : 'likes';
   }
 
   const $ = (sel) => document.querySelector(sel);
@@ -335,7 +335,7 @@
   function needCard(post) {
     return `
       <article class="card need${post.sunk ? ' sunk' : ''}" data-open-detail="${post.id}">
-        <h3 class="card-title">${esc(post.title)}</h3>
+        <h3 class="card-title">${esc(post.title)}${isMine(post) ? ' <span class="mine-tag" title="你发布 / 认领 / 留言过的">🫵 我的</span>' : ''}</h3>
         <p class="card-excerpt">${renderText(post.content, { noImages: true })}</p>
         ${cardMeta(post, needStatusTag(post) + sinkTag(post))}
         <div class="card-foot">
@@ -348,7 +348,7 @@
   function doneCard(post) {
     return `
       <article class="card done${post.sunk ? ' sunk' : ''}" data-open-detail="${post.id}">
-        <h3 class="card-title">${esc(post.title)}</h3>
+        <h3 class="card-title">${esc(post.title)}${isMine(post) ? ' <span class="mine-tag" title="你发布 / 认领 / 留言过的">🫵 我的</span>' : ''}</h3>
         <p class="card-excerpt">${renderText(post.content, { noImages: true })}</p>
         ${cardMeta(post, sinkTag(post))}
         <div class="card-foot">
@@ -420,6 +420,13 @@
     openModal('modal-detail');
   }
 
+  /* "我的"判定：我发的（按昵称，改名后失配）/ 我认领的（设备指纹）/ 我留言过的（设备指纹） */
+  function isMine(post) {
+    if (state.me && post.author === state.me) return true;
+    if (post.claim && post.claim.fp === state.fp) return true;
+    return (post.comments || []).some((c) => c.fp === state.fp);
+  }
+
   function filterAndSort(list, sortKey, statusFn) {
     let out = list;
     const q = state.query.trim().toLowerCase();
@@ -433,6 +440,13 @@
       out.sort((a, b) => (b.like_count || 0) - (a.like_count || 0));
     } else if (sortKey === 'comments') {
       out.sort((a, b) => (b.comments || []).length - (a.comments || []).length);
+    } else if (sortKey === 'mine') {
+      out.sort((a, b) => {
+        const ma = isMine(a) ? 1 : 0;
+        const mb = isMine(b) ? 1 : 0;
+        if (ma !== mb) return mb - ma;
+        return (b.like_count || 0) - (a.like_count || 0);
+      });
     } else {
       out.sort((a, b) => {
         const sa = statusFn ? statusFn(a) : 'open';
@@ -1213,8 +1227,23 @@
 
   document.querySelectorAll('.btn-close').forEach((b) =>
     b.addEventListener('click', () => closeModal(b.dataset.close)));
-  document.querySelectorAll('.modal-mask').forEach((m) =>
-    m.addEventListener('click', (e) => { if (e.target === m) m.classList.add('hidden'); }));
+  document.querySelectorAll('.modal-mask').forEach((m) => {
+    let downOnMask = false;
+    m.addEventListener('mousedown', (e) => {
+      downOnMask = (e.target === m);
+      if (downOnMask) {
+        const sel = window.getSelection();
+        if (sel) sel.removeAllRanges(); // 点遮罩视为放弃选中，避免残留选中挡住关闭
+      }
+    });
+    m.addEventListener('click', (e) => {
+      if (e.target !== m) return;
+      if (!downOnMask) return; // 从内容里按下拖到遮罩上松开（选字）不算点击遮罩
+      const sel = window.getSelection();
+      if (sel && sel.toString().trim()) return; // 有选中文字时不关闭
+      m.classList.add('hidden');
+    });
+  });
 
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {

@@ -204,6 +204,20 @@ main { max-width: 1080px; margin: 0 auto; padding: 24px; }
 .status-tag.doing { background: #e7eee1; color: #55703f; }
 .status-tag.done { background: #ece8e1; color: #8d8678; }
 
+.mine-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 1px 8px;
+  border-radius: 99px;
+  background: #fdf3e3;
+  color: #b0762a;
+  vertical-align: middle;
+  margin-left: 6px;
+}
+
 .sink-tag {
   display: inline-flex;
   align-items: center;
