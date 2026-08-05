@@ -525,7 +525,7 @@ class Handler(BaseHTTPRequestHandler):
                     flags_by_fp[f] = info["flags"]
             for it in plist + clist + wlist:
                 it["flags"] = flags_by_fp.get(it.get("fp", ""), 0)
-            claims = [c for c in load_json(CLAIMS_FILE, []) if c.get("status") == "pending"]
+            claims = [dict(c, kind="claim") for c in load_json(CLAIMS_FILE, []) if c.get("status") == "pending"]
             self._send(200, {"ok": True, "posts": plist, "comments": clist, "wall": wlist, "claims": claims})
             return
         if path == "/api/admin/trash":

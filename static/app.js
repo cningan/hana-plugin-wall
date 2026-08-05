@@ -707,6 +707,7 @@
       const res = await api('/api/admin/check?token=' + encodeURIComponent(state.token));
       if (res.ok) {
         state.adminMode = true;
+        loadPending();
       } else {
         state.token = '';
         localStorage.removeItem('hana_wall_token');
@@ -1069,7 +1070,7 @@
         </div>
         ${it.title ? `<div class="pending-title">「${esc(it.title)}」</div>` : ''}
         <div class="pending-content">${renderText(it.content, { noImages: true })}</div>
-        <p class="sensitive-hint">命中词：${it.sensitive.map((w) => `<b>${esc(w)}</b>`).join('、')}</p>
+        <p class="sensitive-hint">命中词：${(it.sensitive || []).map((w) => `<b>${esc(w)}</b>`).join('、')}</p>
         ${flags}
         <div class="pending-actions">
           <button type="button" class="comment-reply-btn ok" data-pending-action="normal" data-kind="${it.kind}" data-id="${it.id}" data-pid="${it.pid || ''}">✅ 放行</button>
@@ -1098,7 +1099,10 @@
           ? items.map(pendingItemHtml).join('')
           : '<p class="empty-inline">暂无待审内容 🎉</p>';
       }
-    } catch (e) { /* 网络错误静默，按钮计数保持旧值 */ }
+    } catch (e) {
+      const list = $('#pending-list');
+      if (list) list.innerHTML = '<p class="empty-inline">待审加载失败：' + esc(e && e.message) + '</p>';
+    }
   }
 
   function openPending() {
