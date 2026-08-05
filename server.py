@@ -29,6 +29,7 @@ ANNOUNCEMENT_FILE = os.path.join(DATA_DIR, "announcement.json")
 STATIC_DIR = os.path.join(BASE_DIR, "static")
 SECRET_FILE = os.path.join(BASE_DIR, "secret.txt")
 SENSITIVE_FILE = os.path.join(BASE_DIR, "sensitive.txt")  # 敏感词库（本地化，一行一词）
+TRASH_FILE = os.path.join(DATA_DIR, "trash.json")  # 回收站（软删除，定期清理）
 
 GROUP_NAME = "Hana 交流群"
 TOKENS = set()
@@ -56,6 +57,7 @@ MAX_LEN = {
 
 MAX_LOG = 500  # 操作日志最多保留条数
 MAX_VISITORS = 1000  # 游客账号最多保留数（超出删最早）
+TRASH_RETENTION_DAYS = 7  # 回收站保留天数，超期自动永久清理（懒清理：读取时）
 
 CONTENT_TYPES = {
     ".html": "text/html; charset=utf-8",
@@ -168,6 +170,42 @@ def set_status(item, status):
     """写 status 并清理旧 hidden 字段，保证双轨不并存"""
     item["status"] = status
     item.pop("hidden", None)
+
+
+# ---------- 回收站（软删除：删除进回收站，超期自动清理，可恢复/彻底删除） ----------
+
+def load_trash():
+    """读取回收站并顺手清理过期条目（懒清理：删除/查看时触发）"""
+    trash = load_json(TRASH_FILE, [])
+    now = datetime.now(TZ)
+    keep = []
+    for t in trash:
+        try:
+            dt = datetime.strptime(t.get("deleted_at", ""), "%Y-%m-%d %H:%M").replace(tzinfo=TZ)
+        except Exception:
+            dt = now
+        if (now - dt).days < TRASH_RETENTION_DAYS:
+            keep.append(t)
+    if len(keep) != len(trash):
+        save_json(TRASH_FILE, keep)
+    return keep
+
+
+def save_trash(trash):
+    save_json(TRASH_FILE, trash)
+
+
+def move_to_trash(kind, pid, data, title, who):
+    """把内容快照移入回收站，返回 tid"""
+    trash = load_trash()
+    tid = max((t.get("tid", 0) for t in trash), default=0) + 1
+    trash.append({
+        "tid": tid, "kind": kind, "pid": pid,
+        "data": data, "title": title,
+        "who": who, "deleted_at": now_str(),
+    })
+    save_trash(trash)
+    return tid
 
 
 def check_token(token):
@@ -483,6 +521,15 @@ class Handler(BaseHTTPRequestHandler):
                 it["flags"] = flags_by_fp.get(it.get("fp", ""), 0)
             self._send(200, {"ok": True, "posts": plist, "comments": clist, "wall": wlist})
             return
+        if path == "/api/admin/trash":
+            if not check_token(params.get("token", "")):
+                self._send(401, {"ok": False, "error": "未登录或登录已过期"})
+                return
+            trash = load_trash()
+            for t in trash:
+                t["kind_label"] = {"post": "帖子", "comment": "评论", "wall": "留言"}.get(t.get("kind"), "")
+            self._send(200, {"ok": True, "trash": trash})
+            return
         if path == "/api/announcement":
             ann = load_json(ANNOUNCEMENT_FILE, None)
             self._send(200, {"ok": True, "announcement": ann})
@@ -645,6 +692,7 @@ class Handler(BaseHTTPRequestHandler):
                 if post is None:
                     self._send(404, {"ok": False, "error": "帖子不存在"})
                     return
+                move_to_trash("post", 0, post, post.get("title", ""), post.get("author") or "匿名")
                 posts.remove(post)
                 if post["type"] == "need":
                     for p in posts:
@@ -654,9 +702,134 @@ class Handler(BaseHTTPRequestHandler):
                 content = post.get("content", "")
                 if len(content) > 60:
                     content = content[:60] + "……"
-                append_log("delete", pid, post.get("title", ""),
-                           f"删除卡片（作者：{who}）内容：{content}")
+                append_log("trash", pid, post.get("title", ""),
+                           f"删除卡片入回收站（作者：{who}）内容：{content}")
                 save_posts(posts)
+                self._send(200, {"ok": True})
+                return
+            m = re.match(r"^/api/admin/posts/(\d+)/comments/(\d+)/delete$", path)
+            if m:
+                if not check_token(clean_text(data.get("token", ""), "token")):
+                    self._send(401, {"ok": False, "error": "未登录或登录已过期"})
+                    return
+                pid = int(m.group(1))
+                cid = int(m.group(2))
+                post = next((p for p in posts if p["id"] == pid), None)
+                if post is None:
+                    self._send(404, {"ok": False, "error": "帖子不存在"})
+                    return
+                comments = post.get("comments", [])
+                comment = next((c for c in comments if c.get("id") == cid), None)
+                if comment is None:
+                    self._send(404, {"ok": False, "error": "留言不存在"})
+                    return
+                move_to_trash("comment", pid, comment, post.get("title", ""), comment.get("name") or "匿名")
+                comments.remove(comment)
+                for c in comments:
+                    if c.get("reply_to") == cid:
+                        c["reply_to"] = None  # 子回复变顶级，避免悬空
+                who = comment.get("name") or "匿名"
+                content = comment.get("content", "")
+                if len(content) > 60:
+                    content = content[:60] + "……"
+                append_log("trash", pid, post.get("title", ""),
+                           f"删除评论入回收站（作者：{who}）内容：{content}")
+                save_posts(posts)
+                self._send(200, {"ok": True})
+                return
+            m = re.match(r"^/api/admin/wall/(\d+)/delete$", path)
+            if m:
+                if not check_token(clean_text(data.get("token", ""), "token")):
+                    self._send(401, {"ok": False, "error": "未登录或登录已过期"})
+                    return
+                mid = int(m.group(1))
+                wall = load_json(WALL_FILE, [])
+                msg = next((m0 for m0 in wall if m0.get("id") == mid), None)
+                if msg is None:
+                    self._send(404, {"ok": False, "error": "留言不存在"})
+                    return
+                move_to_trash("wall", 0, msg, "留言板", msg.get("name") or "匿名")
+                wall.remove(msg)
+                for m0 in wall:
+                    if m0.get("reply_to") == mid:
+                        m0["reply_to"] = None
+                who = msg.get("name") or "匿名"
+                content = msg.get("content", "")
+                if len(content) > 60:
+                    content = content[:60] + "……"
+                append_log("trash", 0, "留言板",
+                           f"删除留言入回收站（作者：{who}）内容：{content}")
+                save_json(WALL_FILE, wall)
+                self._send(200, {"ok": True})
+                return
+            m = re.match(r"^/api/admin/trash/(\d+)/restore$", path)
+            if m:
+                if not check_token(clean_text(data.get("token", ""), "token")):
+                    self._send(401, {"ok": False, "error": "未登录或登录已过期"})
+                    return
+                tid = int(m.group(1))
+                trash = load_trash()
+                t = next((x for x in trash if x.get("tid") == tid), None)
+                if t is None:
+                    self._send(404, {"ok": False, "error": "回收站条目不存在"})
+                    return
+                kind, data = t.get("kind"), t.get("data")
+                if kind == "post":
+                    if any(p.get("id") == data.get("id") for p in posts):
+                        self._send(409, {"ok": False, "error": "该帖子已存在，无法恢复"})
+                        return
+                    posts.append(data)
+                    save_posts(posts)
+                elif kind == "comment":
+                    post = next((p for p in posts if p["id"] == t.get("pid")), None)
+                    if post is None:
+                        self._send(404, {"ok": False, "error": "原帖子已不存在，无法恢复该评论"})
+                        return
+                    comments = post.setdefault("comments", [])
+                    if any(c.get("id") == data.get("id") for c in comments):
+                        self._send(409, {"ok": False, "error": "该评论已存在，无法恢复"})
+                        return
+                    comments.append(data)
+                    save_posts(posts)
+                elif kind == "wall":
+                    wall = load_json(WALL_FILE, [])
+                    if any(m0.get("id") == data.get("id") for m0 in wall):
+                        self._send(409, {"ok": False, "error": "该留言已存在，无法恢复"})
+                        return
+                    wall.append(data)
+                    save_json(WALL_FILE, wall)
+                else:
+                    self._send(400, {"ok": False, "error": "未知类型"})
+                    return
+                trash.remove(t)
+                save_trash(trash)
+                append_log("restore", tid, t.get("title", ""),
+                           f"恢复{ {'post': '帖子', 'comment': '评论', 'wall': '留言'}.get(kind, kind) }（{t.get('who', '')}）")
+                self._send(200, {"ok": True})
+                return
+            m = re.match(r"^/api/admin/trash/(\d+)/purge$", path)
+            if m:
+                if not check_token(clean_text(data.get("token", ""), "token")):
+                    self._send(401, {"ok": False, "error": "未登录或登录已过期"})
+                    return
+                tid = int(m.group(1))
+                trash = load_trash()
+                t = next((x for x in trash if x.get("tid") == tid), None)
+                if t is None:
+                    self._send(404, {"ok": False, "error": "回收站条目不存在"})
+                    return
+                trash.remove(t)
+                save_trash(trash)
+                append_log("purge", tid, t.get("title", ""),
+                           f"彻底删除回收站条目（{t.get('who', '')}）")
+                self._send(200, {"ok": True})
+                return
+            if path == "/api/admin/trash/clear":
+                if not check_token(clean_text(data.get("token", ""), "token")):
+                    self._send(401, {"ok": False, "error": "未登录或登录已过期"})
+                    return
+                save_trash([])
+                append_log("clear", 0, "回收站", "清空回收站（全部彻底删除）")
                 self._send(200, {"ok": True})
                 return
             m = re.match(r"^/api/admin/posts/(\d+)/sink$", path)

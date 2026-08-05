@@ -293,7 +293,8 @@
     const adminBtn = adminCanSee
       ? (st === 'normal'
           ? `<button type="button" class="comment-reply-btn danger" data-hide="comment" data-cid="${c.id}" title="屏蔽后访客不可见，原地留痕">⛔ 屏蔽</button>`
-          : `<button type="button" class="comment-reply-btn" data-unhide="comment" data-cid="${c.id}" title="${st === 'pending' ? '审核通过，恢复显示' : '恢复显示'}">✅ 放行</button>`)
+          : `<button type="button" class="comment-reply-btn" data-unhide="comment" data-cid="${c.id}" title="${st === 'pending' ? '审核通过，恢复显示' : '恢复显示'}">✅ 放行</button>`) +
+        `<button type="button" class="comment-reply-btn danger" data-del-comment data-cid="${c.id}" title="移入回收站（保留 7 天）">🗑</button>`
       : '';
     const replyBtn = (!hidden || adminCanSee)
       ? `<button type="button" class="comment-reply-btn" data-reply-btn="${c.id}">↩ 回复</button>` : '';
@@ -575,7 +576,8 @@
     const adminBtn = adminCanSee
       ? (st === 'normal'
           ? `<button type="button" class="comment-reply-btn danger" data-hide="wall" data-cid="${m.id}" title="屏蔽后访客不可见，原地留痕">⛔ 屏蔽</button>`
-          : `<button type="button" class="comment-reply-btn" data-unhide="wall" data-cid="${m.id}" title="${st === 'pending' ? '审核通过，恢复显示' : '恢复显示'}">✅ 放行</button>`)
+          : `<button type="button" class="comment-reply-btn" data-unhide="wall" data-cid="${m.id}" title="${st === 'pending' ? '审核通过，恢复显示' : '恢复显示'}">✅ 放行</button>`) +
+        `<button type="button" class="comment-reply-btn danger" data-del-wall data-cid="${m.id}" title="移入回收站（保留 7 天）">🗑</button>`
       : '';
     const replyBtn = (!hidden || adminCanSee)
       ? `<button type="button" class="comment-reply-btn" data-wall-reply="${m.id}">↩ 回复</button>` : '';
@@ -965,6 +967,7 @@
         <div class="pending-actions">
           <button type="button" class="comment-reply-btn" data-pending-action="normal" data-kind="${it.kind}" data-id="${it.id}" data-pid="${it.pid || ''}">✅ 放行</button>
           <button type="button" class="comment-reply-btn danger" data-pending-action="hidden" data-kind="${it.kind}" data-id="${it.id}" data-pid="${it.pid || ''}">⛔ 屏蔽</button>
+          <button type="button" class="comment-reply-btn danger" data-pending-action="delete" data-kind="${it.kind}" data-id="${it.id}" data-pid="${it.pid || ''}" title="移入回收站（保留 7 天）">🗑 删除</button>
         </div>
       </div>`;
   }
@@ -996,15 +999,16 @@
     loadPending();
   }
 
-  async function reviewPending(kind, id, pid, status) {
+  async function reviewPending(kind, id, pid, action) {
+    if (action === 'delete' && !confirm('确定删除？将移入回收站（保留 7 天），期间可恢复。')) return;
     let path;
-    if (kind === 'post') path = `/api/admin/posts/${id}/review`;
-    else if (kind === 'comment') path = `/api/admin/posts/${pid}/comments/${id}/review`;
-    else path = `/api/admin/wall/${id}/review`;
+    if (kind === 'post') path = `/api/admin/posts/${id}/${action === 'delete' ? 'delete' : 'review'}`;
+    else if (kind === 'comment') path = `/api/admin/posts/${pid}/comments/${id}/${action === 'delete' ? 'delete' : 'review'}`;
+    else path = `/api/admin/wall/${id}/${action === 'delete' ? 'delete' : 'review'}`;
     try {
-      const res = await api(path, { token: state.token, status });
+      const res = await api(path, { token: state.token, status: action === 'delete' ? undefined : action });
       if (!res.ok) throw new Error(res.error);
-      toast(status === 'normal' ? '已放行 ✅' : '已屏蔽 ⛔');
+      toast(action === 'normal' ? '已放行 ✅' : action === 'hidden' ? '已屏蔽 ⛔' : '已移入回收站 🗑');
       await loadPending();
       await loadPosts();
       await loadWall();
@@ -1106,12 +1110,14 @@
     const annEdit = $('#btn-edit-announcement');
     const changelogBtn = $('#btn-changelog');
     const pendingBtn = $('#btn-pending');
+    const trashBtn = $('#btn-trash');
     const managing = state.adminMode;
     if (logsBtn) logsBtn.classList.toggle('hidden', !managing);
     if (badge) badge.classList.toggle('hidden', !managing);
     if (annEdit) annEdit.classList.toggle('hidden', !managing);
     if (changelogBtn) changelogBtn.classList.toggle('hidden', !state.vtoken);
     if (pendingBtn) pendingBtn.classList.toggle('hidden', !managing);
+    if (trashBtn) trashBtn.classList.toggle('hidden', !managing);
     if (link) link.textContent = managing ? '⚙ 退出管理' : '⚙ 管理';
   }
 
@@ -1186,7 +1192,7 @@
         list.innerHTML = res.logs.map((l) => `
           <div class="log-item">
             <div class="log-head">
-              <span class="log-action ${esc(l.action)}">${{ edit: '✏ 编辑', delete: '🗑 删除', sink: '⬇ 沉底', unsink: '⬆ 恢复', hide: '⛔ 屏蔽', unhide: '↩ 解除屏蔽', review: '✅ 审核' }[l.action] || esc(l.action)}</span>
+              <span class="log-action ${esc(l.action)}">${{ edit: '✏ 编辑', delete: '🗑 删除', sink: '⬇ 沉底', unsink: '⬆ 恢复', hide: '⛔ 屏蔽', unhide: '↩ 解除屏蔽', review: '✅ 审核', trash: '🗑 回收站', restore: '↩ 恢复', purge: '🔥 彻底删除', clear: '🧹 清空' }[l.action] || esc(l.action)}</span>
               <b>#${l.post_id}「${esc(l.title)}」</b>
               <span class="comment-time">${esc(l.time)}</span>
             </div>
@@ -1259,14 +1265,103 @@
   async function deletePost(id) {
     const post = state.posts.find((p) => p.id === id);
     if (!post) return;
-    if (!confirm(`确定删除这条卡片？\n「${post.title}」\n删除后无法恢复。`)) return;
+    if (!confirm(`确定删除这张卡片？\n「${post.title}」\n将移入回收站（保留 7 天），期间可恢复，超期自动清理。`)) return;
     try {
       const res = await api(`/api/admin/posts/${id}/delete`, { token: state.token });
       if (!res.ok) throw new Error(res.error);
-      toast('已删除 🗑');
+      toast('已移入回收站 🗑');
       await loadPosts();
     } catch (err) {
       toast('删除失败：' + err.message);
+    }
+  }
+
+  async function deleteComment(pid, cid) {
+    if (!confirm('确定删除这条评论？将移入回收站（保留 7 天），期间可恢复。')) return;
+    try {
+      const res = await api(`/api/admin/posts/${pid}/comments/${cid}/delete`, { token: state.token });
+      if (!res.ok) throw new Error(res.error);
+      toast('已移入回收站 🗑');
+      await loadPosts();
+    } catch (err) {
+      toast('删除失败：' + err.message);
+    }
+  }
+
+  async function deleteWallMsg(mid) {
+    if (!confirm('确定删除这条留言？将移入回收站（保留 7 天），期间可恢复。')) return;
+    try {
+      const res = await api(`/api/admin/wall/${mid}/delete`, { token: state.token });
+      if (!res.ok) throw new Error(res.error);
+      toast('已移入回收站 🗑');
+      await loadWall();
+    } catch (err) {
+      toast('删除失败：' + err.message);
+    }
+  }
+
+  /* ---------- 回收站（软删除，7 天自动清理） ---------- */
+
+  function trashKindLabel(kind) {
+    return { post: '📌 帖子', comment: '💬 评论', wall: '🗨 留言板' }[kind] || '';
+  }
+
+  function trashItemHtml(t) {
+    const d = t.data || {};
+    const preview = d.content || d.title || '';
+    return `
+      <div class="pending-item">
+        <div class="pending-head">
+          <span class="log-action delete">${trashKindLabel(t.kind)}</span>
+          <b>${esc(d.name || d.author || '匿名')}</b>
+          <span class="comment-time">${esc(t.deleted_at)} 删除</span>
+        </div>
+        ${d.title ? `<div class="pending-title">「${esc(d.title)}」</div>` : ''}
+        <div class="pending-content">${renderText(String(preview).slice(0, 100), { noImages: true })}</div>
+        <div class="pending-actions">
+          <button type="button" class="comment-reply-btn" data-trash-action="restore" data-tid="${t.tid}">↩ 恢复</button>
+          <button type="button" class="comment-reply-btn danger" data-trash-action="purge" data-tid="${t.tid}">🗑 彻底删除</button>
+        </div>
+      </div>`;
+  }
+
+  async function loadTrash() {
+    if (!state.adminMode) return;
+    try {
+      const res = await api('/api/admin/trash?token=' + encodeURIComponent(state.token));
+      if (!res.ok) throw new Error(res.error);
+      const list = $('#trash-list');
+      if (list) {
+        list.innerHTML = res.trash.length
+          ? res.trash.map(trashItemHtml).join('')
+          : '<p class="empty-inline">回收站是空的</p>';
+      }
+    } catch (e) { /* 静默 */ }
+  }
+
+  function openTrash() {
+    $('#trash-list').innerHTML = '<p class="empty-inline">加载中…</p>';
+    openModal('modal-trash');
+    loadTrash();
+  }
+
+  async function trashAction(tid, action) {
+    if (action === 'purge' && !confirm('彻底删除后无法恢复，确定？')) return;
+    if (action === 'clear' && !confirm('清空回收站？所有条目将被彻底删除，无法恢复。')) return;
+    try {
+      let path;
+      if (action === 'restore') path = `/api/admin/trash/${tid}/restore`;
+      else if (action === 'purge') path = `/api/admin/trash/${tid}/purge`;
+      else path = '/api/admin/trash/clear';
+      const res = await api(path, { token: state.token });
+      if (!res.ok) throw new Error(res.error);
+      toast(action === 'restore' ? '已恢复 ↩' : '已彻底删除 🗑');
+      await loadTrash();
+      await loadPosts();
+      await loadWall();
+      await loadPending();
+    } catch (err) {
+      toast('操作失败：' + err.message);
     }
   }
 
@@ -1345,11 +1440,21 @@
     e.preventDefault();
     openPending();
   });
+  on('#btn-trash', 'click', (e) => {
+    e.preventDefault();
+    openTrash();
+  });
   on('#pending-list', 'click', (e) => {
     const btn = e.target.closest('[data-pending-action]');
     if (!btn) return;
     reviewPending(btn.dataset.kind, Number(btn.dataset.id), Number(btn.dataset.pid || 0), btn.dataset.pendingAction);
   });
+  on('#trash-list', 'click', (e) => {
+    const btn = e.target.closest('[data-trash-action]');
+    if (!btn) return;
+    trashAction(Number(btn.dataset.tid), btn.dataset.trashAction);
+  });
+  on('#btn-trash-clear', 'click', () => trashAction(0, 'clear'));
   on('#btn-changelog', 'click', (e) => {
     e.preventDefault();
     openChangelog();
@@ -1413,6 +1518,11 @@
   });
 
   on('#wall-list', 'click', (e) => {
+    const delBtn = e.target.closest('[data-del-wall]');
+    if (delBtn) {
+      deleteWallMsg(Number(delBtn.dataset.cid));
+      return;
+    }
     const hideBtn = e.target.closest('[data-hide]');
     const unhideBtn = e.target.closest('[data-unhide]');
     if (hideBtn || unhideBtn) {
@@ -1443,6 +1553,12 @@
         const pid = Number(postEl.dataset.pid);
         const cid = Number((hideBtn || unhideBtn).dataset.cid);
         reviewComment(pid, cid, hideBtn ? 'hidden' : 'normal');
+        return;
+      }
+      const delCommentBtn = e.target.closest('[data-del-comment]');
+      if (delCommentBtn) {
+        const postEl = e.target.closest('.post');
+        deleteComment(Number(postEl.dataset.pid), Number(delCommentBtn.dataset.cid));
         return;
       }
       const doneBtn = e.target.closest('[data-submit-done]');

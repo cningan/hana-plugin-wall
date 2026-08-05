@@ -127,6 +127,10 @@ h1 {
 
 .btn-outline:hover { background: var(--accent-soft); }
 
+.btn-outline.danger { color: #b0453a; border-color: #b0453a; }
+
+.btn-outline.danger:hover { background: #f6e2de; }
+
 .btn:disabled { opacity: .5; cursor: not-allowed; }
 
 .btn-block { width: 100%; margin-top: 6px; }

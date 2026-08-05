@@ -21,6 +21,7 @@
     <div class="header-right">
       <span id="admin-badge" class="admin-badge hidden" title="点击退出管理模式">👑 管理员</span>
       <button id="btn-pending" class="btn btn-outline admin-entry hidden" title="没有待审内容">🔔 待审</button>
+      <button id="btn-trash" class="btn btn-outline admin-entry hidden" title="删除的内容保留 7 天，可恢复">🗑 回收站</button>
       <button id="btn-logs" class="btn btn-outline admin-entry hidden" title="查看操作日志">📜 日志</button>
       <button id="btn-changelog" class="btn btn-outline admin-entry hidden" title="查看版本更新记录">🆕 更新日志</button>
       <button id="btn-admin" class="btn btn-outline admin-entry" title="进入管理模式">⚙ 管理</button>
@@ -299,8 +300,23 @@
       <h2>🔔 待审队列</h2>
       <button class="btn-close" data-close="modal-pending">✕</button>
     </div>
-    <p class="pending-desc">以下内容命中敏感词自动拦截，访客不可见。放行则公开展示，屏蔽则永久隐藏。</p>
+    <p class="pending-desc">以下内容命中敏感词自动拦截，访客不可见。放行则公开展示，屏蔽则永久隐藏，删除则移入回收站。</p>
     <div id="pending-list" class="logs-list"></div>
+  </div>
+</div>
+
+<!-- 回收站弹窗（仅管理模式可见）：软删除内容，7 天自动清理 -->
+<div id="modal-trash" class="modal-mask hidden">
+  <div class="modal modal-detail">
+    <div class="modal-head">
+      <h2>🗑 回收站</h2>
+      <button class="btn-close" data-close="modal-trash">✕</button>
+    </div>
+    <p class="pending-desc">删除的内容在此保留 7 天（超期自动清理）。恢复则回到原位置，彻底删除不可恢复。</p>
+    <div class="pending-actions" style="margin-top:0">
+      <button type="button" id="btn-trash-clear" class="btn btn-outline danger">🧹 清空回收站</button>
+    </div>
+    <div id="trash-list" class="logs-list" style="margin-top:10px"></div>
   </div>
 </div>
 
