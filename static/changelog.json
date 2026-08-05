@@ -1,7 +1,14 @@
 {
-  "updated_at": "2026-08-05 20:31",
-  "last_commit": "0a217064f05bc119f5ba2be1181ecf06728150a1",
+  "updated_at": "2026-08-05 20:44",
+  "last_commit": "8df6dad7f723cbebfd92583985e2e9f4a3d253bf",
   "versions": [
+    {
+      "version": "v24",
+      "date": "2026-08-05 20:44",
+      "items": [
+        "fix: 待审队列找回申请无 kind 字段导致渲染失败（弹窗卡加载中）+ 管理恢复/刷新自动加载待审计数 + 渲染防御"
+      ]
+    },
     {
       "version": "v23",
       "date": "2026-08-05 20:31",
