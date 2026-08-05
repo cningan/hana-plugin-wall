@@ -1,7 +1,14 @@
 {
-  "updated_at": "2026-08-05 20:07",
-  "last_commit": "c2f0297de2b2d22d8c8b2f7caa5599bf5344ad8a",
+  "updated_at": "2026-08-05 20:20",
+  "last_commit": "0dc23b5326a63587d3fc9165bad4a187d61202a5",
   "versions": [
+    {
+      "version": "v22",
+      "date": "2026-08-05 20:20",
+      "items": [
+        "feat: 登录重排（同设备补绑/改绑 QQ 不再误判注册冲突）+ 安全三件套（管理员禁 QQ 验证/审计日志/失败限流）+ 找回申请附 QQ 批准自动绑定"
+      ]
+    },
     {
       "version": "v21",
       "date": "2026-08-05 20:07",
