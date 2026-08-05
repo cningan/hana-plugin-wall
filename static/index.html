@@ -190,7 +190,10 @@
         </div>
         <div class="field">
           <label for="n-pw">密码</label>
-          <input id="n-pw" type="password" maxlength="20" placeholder="6-20 位" required>
+          <div class="pw-wrap">
+            <input id="n-pw" type="password" maxlength="20" placeholder="6-20 位" required>
+            <button type="button" class="pw-toggle" data-target="n-pw" title="显示/隐藏密码">👁</button>
+          </div>
         </div>
         <p class="field-hint">忘记密码？联系管理员（李）人工重置。</p>
         <div id="login-tip" class="name-tip hidden"></div>
@@ -203,7 +206,17 @@
         </div>
         <div class="field">
           <label for="r-pw">密码</label>
-          <input id="r-pw" type="password" maxlength="20" placeholder="6-20 位" required>
+          <div class="pw-wrap">
+            <input id="r-pw" type="password" maxlength="20" placeholder="6-20 位" required>
+            <button type="button" class="pw-toggle" data-target="r-pw" title="显示/隐藏密码">👁</button>
+          </div>
+        </div>
+        <div class="field">
+          <label for="r-pw2">确认密码</label>
+          <div class="pw-wrap">
+            <input id="r-pw2" type="password" maxlength="20" placeholder="再输一遍，确保没输错" required>
+            <button type="button" class="pw-toggle" data-target="r-pw2" title="显示/隐藏密码">👁</button>
+          </div>
         </div>
         <div class="field">
           <label for="r-name">昵称</label>

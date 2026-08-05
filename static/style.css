@@ -992,6 +992,28 @@ main { max-width: 1080px; margin: 0 auto; padding: 24px; }
 .user-actions .comment-reply-btn { padding: 4px 9px; font-size: 12px; }
 
 /* ---------- 账号弹窗：登录/注册 Tab ---------- */
+.pw-wrap {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.pw-wrap input { flex: 1; min-width: 0; }
+
+.pw-toggle {
+  flex-shrink: 0;
+  width: 36px;
+  height: 36px;
+  border: 1px solid var(--line);
+  background: var(--card-soft);
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 15px;
+  line-height: 1;
+}
+
+.pw-toggle:hover { background: var(--line); }
+
 .auth-tabs {
   display: flex;
   gap: 8px;

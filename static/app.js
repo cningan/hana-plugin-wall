@@ -780,12 +780,17 @@
 
   async function submitReg(e) {
     e.preventDefault();
+    const pw = $('#r-pw').value;
+    if (pw !== $('#r-pw2').value) {
+      showTip($('#reg-tip'), '❌ 两次输入的密码不一致，请重新确认');
+      return;
+    }
     const btn = $('#form-reg button[type="submit"]');
     btn.disabled = true;
     try {
       const res = await api('/api/user/register', {
         qq: $('#r-qq').value.trim(),
-        password: $('#r-pw').value,
+        password: pw,
         name: $('#r-name').value.trim(),
         fp: state.fp,
       });
@@ -798,6 +803,7 @@
       saveVtoken(res.token);
       $('#r-qq').value = '';
       $('#r-pw').value = '';
+      $('#r-pw2').value = '';
       $('#r-name').value = '';
       toast(res.inherited ? '注册成功，已继承旧身份 ✅' : '注册成功 🎉');
       closeModal('modal-name');
@@ -1699,6 +1705,16 @@
   on('#btn-ac-save', 'click', saveRename);
   on('#tab-login', 'click', () => switchAuthTab('login'));
   on('#tab-reg', 'click', () => switchAuthTab('reg'));
+  document.addEventListener('click', (e) => {
+    const btn = e.target.closest('.pw-toggle');
+    if (!btn) return;
+    const input = document.getElementById(btn.dataset.target);
+    if (!input) return;
+    const show = input.type === 'password';
+    input.type = show ? 'text' : 'password';
+    btn.textContent = show ? '🙈' : '👁';
+    input.focus();
+  });
   on('#btn-name-logout', 'click', async (e) => {
     e.preventDefault();
     await logoutVisitor();
