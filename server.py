@@ -12,6 +12,7 @@ import os
 import re
 import secrets
 import threading
+import time
 import urllib.request
 from datetime import datetime, timezone, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -60,6 +61,9 @@ MAX_LEN = {
 MAX_LOG = 500  # 操作日志最多保留条数
 MAX_VISITORS = 1000  # 游客账号最多保留数（超出删最早）
 TRASH_RETENTION_DAYS = 7  # 回收站保留天数，超期自动永久清理（懒清理：读取时）
+QQ_LOCK_WINDOW = 300  # QQ 验证失败限流窗口（秒，5 分钟）
+QQ_MAX_FAILS = 5  # 窗口内最多失败次数，超限锁定
+QQ_FAILS = {}  # 昵称小写 -> [失败时间戳]，QQ 验证登录防枚举
 
 CONTENT_TYPES = {
     ".html": "text/html; charset=utf-8",
@@ -620,30 +624,49 @@ class Handler(BaseHTTPRequestHandler):
                 qq = clean_text(data.get("qq", ""), "qq")
                 visitors = load_json(VISITORS_FILE, {})
                 name_key = name.casefold()
-                # QQ 验证登录（跨设备找回）：昵称 + 绑定 QQ 匹配 → 复用原身份，设备迁移到当前设备
+                # ① 同设备同名 → 自动登录（复用原身份）；填了 QQ 视为补绑/改绑（本设备即是主人，无需再验证）
+                for t, info in visitors.items():
+                    if info.get("fp") == fp and str(info.get("name", "")).casefold() == name_key:
+                        if qq and str(info.get("qq", "") or "").casefold() != qq.casefold():
+                            info["qq"] = qq
+                            save_json(VISITORS_FILE, visitors)
+                        self._send(200, {"ok": True, "token": t, "name": info.get("name", name)})
+                        return
+                # ② QQ 验证登录（跨设备找回）：昵称 + 绑定 QQ 匹配 → 复用原身份，设备迁移到当前设备
                 if qq:
-                    qq_key = qq.casefold()
+                    now_ts = time.time()
+                    fails = [x for x in QQ_FAILS.get(name_key, []) if now_ts - x < QQ_LOCK_WINDOW]
+                    if len(fails) >= QQ_MAX_FAILS:
+                        self._send(429, {"ok": False, "error": "QQ 验证尝试过多，请 5 分钟后再试"})
+                        return
                     for t, info in visitors.items():
                         if str(info.get("name", "")).casefold() == name_key and \
-                                info.get("qq") and str(info.get("qq", "")).casefold() == qq_key:
+                                info.get("qq") and str(info.get("qq", "")).casefold() == qq.casefold():
+                            if bool(info.get("is_admin")):
+                                # 管理员不开放 QQ 验证登录（QQ 是公开弱秘密，防管理权限被窃取）
+                                QQ_FAILS[name_key] = fails + [now_ts]
+                                self._send(403, {"ok": False, "error": "管理员账号不支持 QQ 验证登录"})
+                                return
                             if info.get("fp") != fp:
+                                append_log("qq_login", 0, info.get("name", name),
+                                           f"QQ 验证登录：设备迁移 {str(info.get('fp', ''))[:8]}… → {fp[:8]}…")
                                 info["fp"] = fp
                                 save_json(VISITORS_FILE, visitors)
+                            else:
+                                append_log("qq_login", 0, info.get("name", name), "QQ 验证登录（本设备）")
+                            QQ_FAILS.pop(name_key, None)
                             self._send(200, {"ok": True, "token": t, "name": info.get("name", name)})
                             return
                     if any(str(info.get("name", "")).casefold() == name_key for info in visitors.values()):
-                        self._send(409, {"ok": False, "error": "该昵称与 QQ 号不匹配", "claimable": True})
+                        QQ_FAILS[name_key] = fails + [now_ts]
+                        self._send(409, {"ok": False, "error": "该昵称与 QQ 号不匹配，请确认后重试",
+                                         "reason": "qq_mismatch", "claimable": True})
                         return
-                # 同设备同名 → 自动登录：复用原 token，保留 is_admin/违规计数等身份信息
-                for t, info in visitors.items():
-                    if info.get("fp") == fp and str(info.get("name", "")).casefold() == name_key:
-                        self._send(200, {"ok": True, "token": t, "name": info.get("name", name)})
-                        return
-                # 不同设备同名 → 拒绝（防冒名；访客可提交找回申请）
+                # ③ 不同设备同名 → 拒绝（防冒名；访客可提交找回申请）
                 for info in visitors.values():
                     if info.get("fp") != fp and str(info.get("name", "")).casefold() == name_key:
                         self._send(409, {"ok": False, "error": "该昵称已被其他设备使用；如是你本人，填入 QQ 号即可找回，或提交申请",
-                                         "claimable": True})
+                                         "reason": "other_device", "claimable": True})
                         return
                 # 同设备改名 → 新身份，继承旧身份的 is_admin / 违规计数 / QQ 绑定
                 old = {}
@@ -676,7 +699,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, {"ok": True})
                 return
             if path == "/api/visitor/claim":
-                """访客找回申请：同名被拒后提交，管理员批准后把昵称改绑到申请人设备"""
+                """访客找回申请：同名被拒后提交，管理员批准后把昵称改绑到申请人设备；附 QQ 则批准时自动绑定"""
                 name = clean_text(data.get("name", ""), "name")
                 fp = clean_text(data.get("fp", ""), "fp")
                 if not name:
@@ -685,6 +708,7 @@ class Handler(BaseHTTPRequestHandler):
                 if not re.fullmatch(r"[0-9a-f]{8,64}", fp):
                     self._send(400, {"ok": False, "error": "设备标识无效"})
                     return
+                qq = clean_text(data.get("qq", ""), "qq")
                 visitors = load_json(VISITORS_FILE, {})
                 name_key = name.casefold()
                 targets = [info for info in visitors.values()
@@ -700,7 +724,7 @@ class Handler(BaseHTTPRequestHandler):
                     self._send(409, {"ok": False, "error": "已有待审批的找回申请，请等待管理员处理"})
                     return
                 cid = max((c.get("id", 0) for c in claims), default=0) + 1
-                claims.append({"id": cid, "name": name, "fp": fp,
+                claims.append({"id": cid, "name": name, "fp": fp, "qq": qq,
                                "created_at": now_str(), "status": "pending"})
                 save_json(CLAIMS_FILE, claims)
                 self._send(200, {"ok": True, "id": cid})
@@ -973,10 +997,14 @@ class Handler(BaseHTTPRequestHandler):
                         if visitors[t].get("fp") != claim.get("fp"):
                             visitors[t]["fp"] = claim["fp"]
                             changed = True
+                        if claim.get("qq"):
+                            visitors[t]["qq"] = claim["qq"]
+                            changed = True
                     if changed:
                         save_json(VISITORS_FILE, visitors)
+                    qq_note = f"，绑定 QQ {claim.get('qq')}" if claim.get("qq") else ""
                     append_log("claim_approve", cid, claim.get("name", ""),
-                               f"批准找回申请（改绑到设备 {claim.get('fp', '')[:8]}…）")
+                               f"批准找回申请（改绑到设备 {claim.get('fp', '')[:8]}…{qq_note}）")
                 else:
                     append_log("claim_reject", cid, claim.get("name", ""), "拒绝找回申请")
                 claims.remove(claim)

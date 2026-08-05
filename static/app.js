@@ -721,7 +721,9 @@
         const res = await api('/api/visitor/login', { name, fp: state.fp, qq: $('#n-qq').value.trim() });
         if (!res.ok) {
           if (res.claimable) {
-            $('#name-tip').textContent = '该昵称已被其他设备使用。绑定过 QQ 的话，填好 QQ 号再点保存即可找回；没绑定 QQ 可提交申请，管理员批准后即可登录。';
+            $('#name-tip').textContent = res.reason === 'qq_mismatch'
+              ? '该昵称与填写的 QQ 号不匹配，请确认后重试；也可提交找回申请（附上 QQ，管理员批准后自动绑定）'
+              : '该昵称已被其他设备使用。绑定过 QQ 的话，填好 QQ 号再点保存即可找回；没绑定 QQ 可提交申请（建议附上 QQ，批准后自动绑定），批准后即可登录。';
             $('#name-tip').classList.remove('hidden');
             $('#btn-name-claim').classList.remove('hidden');
             return; // 保持弹窗打开，让用户补 QQ 或提交申请
@@ -1041,7 +1043,7 @@
           <b>「${esc(it.name)}」</b>
           <span class="comment-time">${esc(it.created_at)}</span>
         </div>
-        <div class="pending-content">申请人设备指纹 ${esc(String(it.fp || '').slice(0, 8))}…。批准后该昵称改绑到这台设备，原身份（👑/违规记录）保留。</div>
+        <div class="pending-content">申请人设备指纹 ${esc(String(it.fp || '').slice(0, 8))}…${it.qq ? '，附 QQ：<b>' + esc(it.qq) + '</b>' : ''}。批准后该昵称改绑到这台设备${it.qq ? '并绑定该 QQ（之后可凭昵称+QQ 跨设备登录）' : ''}，原身份（👑/违规记录）保留。</div>
         <div class="pending-actions">
           <button type="button" class="comment-reply-btn ok" data-claim-action="approve" data-id="${it.id}">✅ 批准</button>
           <button type="button" class="comment-reply-btn danger" data-claim-action="reject" data-id="${it.id}">✕ 拒绝</button>
@@ -1575,7 +1577,7 @@
     const btn = $('#btn-name-claim');
     btn.disabled = true;
     try {
-      const c = await api('/api/visitor/claim', { name, fp: state.fp });
+      const c = await api('/api/visitor/claim', { name, fp: state.fp, qq: $('#n-qq').value.trim() });
       toast(c.ok ? '找回申请已提交，管理员批准后即可登录 📨' : '申请失败：' + (c.error || ''));
       if (c.ok) {
         $('#name-tip').classList.add('hidden');
