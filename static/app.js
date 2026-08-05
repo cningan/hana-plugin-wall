@@ -33,36 +33,50 @@
     }[c]));
   }
 
-  /* 文本渲染：先转义防注入，再自动识别 http(s) 链接——
-     图片地址（.jpg/.png 等结尾）渲染成图片，其他渲染成可点击链接 */
+  /* 文本渲染：先处理 Markdown 图片语法 ![说明](链接)（图片），
+     再转义防注入 + 识别 http(s) 链接（一律渲染为可点击链接）。
+     图片必须用 ![说明](链接) 显式声明，不做自动识别。 */
   function renderText(text, opts) {
     const raw = String(text == null ? '' : text);
+    opts = opts || {};
+    const mdImgRe = /!\[([^\]]*)\]\(\s*(https?:\/\/[^)\s]+?)(?:\s+["'][^"']*["'])?\s*\)/g;
+    let out = '';
+    let last = 0;
+    let m;
+    while ((m = mdImgRe.exec(raw)) !== null) {
+      out += urlize(raw.slice(last, m.index), opts);
+      const alt = m[1];
+      const url = m[2];
+      if (!opts.noImages) {
+        out += '<img class="embed-img" src="' + esc(url) + '" alt="' + esc(alt) + '" loading="lazy" ' +
+               'referrerpolicy="no-referrer" onerror="this.style.display=\'none\'">';
+      } else {
+        out += '<a href="' + esc(url) + '" target="_blank" rel="noopener noreferrer">' + esc(alt || url) + '</a>';
+      }
+      last = m.index + m[0].length;
+    }
+    out += urlize(raw.slice(last), opts);
+    return out;
+  }
+
+  function urlize(text, opts) {
     opts = opts || {};
     const urlRe = /https?:\/\/[^\s<>"'()，。！？、；：（）【】《》*]+/g;
     let out = '';
     let last = 0;
     let m;
-    while ((m = urlRe.exec(raw)) !== null) {
-      out += esc(raw.slice(last, m.index));
+    while ((m = urlRe.exec(text)) !== null) {
+      out += esc(text.slice(last, m.index));
       let url = m[0].replace(/[.,!?;:)\]}>]+$/, '');
       if (url.length >= 7) {
-        out += urlToHtml(url, opts);
+        out += '<a href="' + esc(url) + '" target="_blank" rel="noopener noreferrer">' + esc(url) + '</a>';
       } else {
         out += esc(m[0]);
       }
       last = m.index + m[0].length;
     }
-    out += esc(raw.slice(last));
+    out += esc(text.slice(last));
     return out;
-  }
-
-  function urlToHtml(url, opts) {
-    const safe = esc(url);
-    if (!opts.noImages && /\.(jpe?g|png|gif|webp|bmp)(\/)?$/i.test(url.split(/[?#]/)[0])) {
-      return '<img class="embed-img" src="' + safe + '" alt="" loading="lazy" ' +
-             'referrerpolicy="no-referrer" onerror="this.style.display=\'none\'">';
-    }
-    return '<a href="' + safe + '" target="_blank" rel="noopener noreferrer">' + safe + '</a>';
   }
 
   function authorName(post) {
@@ -155,6 +169,7 @@
     $('#tab-home').classList.toggle('active', v === 'home');
     $('#tab-wall').classList.toggle('active', v === 'wall');
     if (v === 'home') render();
+    if (v === 'wall') renderWall();
   }
 
   /* ---------- 加载与渲染 ---------- */
@@ -235,17 +250,33 @@
     return item.is_admin ? '<span class="admin-tag" title="管理员">👑</span>' : '';
   }
 
-  function commentNodeHtml(c, all, byReplyTo, depth) {
+  function commentNodeHtml(c, all, byReplyTo, depth, pid) {
     if (depth > 10) return '';
-    const kids = (byReplyTo.get(c.id) || []).map((k) => commentNodeHtml(k, all, byReplyTo, depth + 1));
+    const kids = (byReplyTo.get(c.id) || []).map((k) => commentNodeHtml(k, all, byReplyTo, depth + 1, pid));
     const parent = all.find((x) => x.id === c.reply_to);
+    const adminCanSee = state.adminMode;
+    const hidden = !!c.hidden;
+    let body;
+    if (hidden && !adminCanSee) {
+      body = '<p class="blocked-hint">⛔ 该内容已被管理员屏蔽</p>';
+    } else {
+      body = `<p>${renderText(c.content)}</p>${hidden ? ' <span class="blocked-tag">⛔ 已屏蔽</span>' : ''}`;
+    }
+    const adminBtn = adminCanSee
+      ? (hidden
+          ? `<button type="button" class="comment-reply-btn" data-unhide="comment" data-cid="${c.id}" title="恢复显示">↩ 解除屏蔽</button>`
+          : `<button type="button" class="comment-reply-btn danger" data-hide="comment" data-cid="${c.id}" title="屏蔽后访客不可见，原地留痕">⛔ 屏蔽</button>`)
+      : '';
+    const replyBtn = (!hidden || adminCanSee)
+      ? `<button type="button" class="comment-reply-btn" data-reply-btn="${c.id}">↩ 回复</button>` : '';
     return `
-      <div class="comment${c.reply_to ? ' comment-reply' : ''}">
+      <div class="comment${c.reply_to ? ' comment-reply' : ''}${hidden ? ' comment-hidden' : ''}">
         <b>${esc(c.name)}</b>${adminTag(c)}
         ${parent ? `<span class="comment-ref">回复 ${esc(parent.name)}</span>` : ''}
         <span class="comment-time">${esc(c.created_at)}</span>
-        <p>${renderText(c.content)}</p>
-        <button type="button" class="comment-reply-btn" data-reply-btn="${c.id}">↩ 回复</button>
+        ${body}
+        ${adminBtn}
+        ${replyBtn}
         ${kids.join('')}
       </div>`;
   }
@@ -263,15 +294,16 @@
     const tops = withId.filter((c) => !c.reply_to || !withId.some((x) => x.id === c.reply_to));
     const listHtml = (tops.length || orphans.length)
       ? '<div class="comment-list">' +
-        orphans.map((c) => commentNodeHtml(c, [], new Map(), 0)).join('') +
-        tops.map((c) => commentNodeHtml(c, withId, byReplyTo, 0)).join('') +
+        orphans.map((c) => commentNodeHtml(c, [], new Map(), 0, post.id)).join('') +
+        tops.map((c) => commentNodeHtml(c, withId, byReplyTo, 0, post.id)).join('') +
         '</div>'
       : '';
     return `
       <div class="comment-area" data-area="${post.id}">
         ${listHtml}
         <form class="comment-form" data-comment="${post.id}">
-          <input class="comment-text" maxlength="200" placeholder="留言：我来做 / 有想法…（贴图片链接自动显示）" required>
+          <input class="comment-text" maxlength="200" placeholder="留言：我来做 / 有想法…（🖼 按钮可插入图片）" required>
+          <button type="button" class="img-btn" data-img-insert-el title="插入图片链接，自动显示为图片">🖼</button>
           <button class="btn-small" type="submit">留言</button>
         </form>
         <div class="reply-badge hidden"></div>
@@ -478,13 +510,29 @@
       .sort((a, b) => a.id - b.id)
       .map((k) => wallItemHtml(k, (depth || 0) + 1)).join('');
     const parent = state.wall.find((x) => x.id === m.reply_to);
+    const adminCanSee = state.adminMode;
+    const hidden = !!m.hidden;
+    let body;
+    if (hidden && !adminCanSee) {
+      body = '<p class="blocked-hint">⛔ 该内容已被管理员屏蔽</p>';
+    } else {
+      body = `<p>${renderText(m.content)}</p>${hidden ? ' <span class="blocked-tag">⛔ 已屏蔽</span>' : ''}`;
+    }
+    const adminBtn = adminCanSee
+      ? (hidden
+          ? `<button type="button" class="comment-reply-btn" data-unhide="wall" data-cid="${m.id}" title="恢复显示">↩ 解除屏蔽</button>`
+          : `<button type="button" class="comment-reply-btn danger" data-hide="wall" data-cid="${m.id}" title="屏蔽后访客不可见，原地留痕">⛔ 屏蔽</button>`)
+      : '';
+    const replyBtn = (!hidden || adminCanSee)
+      ? `<button type="button" class="comment-reply-btn" data-wall-reply="${m.id}">↩ 回复</button>` : '';
     return `
-      <div class="wall-item${m.reply_to ? ' wall-reply' : ''}">
+      <div class="wall-item${m.reply_to ? ' wall-reply' : ''}${hidden ? ' comment-hidden' : ''}">
         <b>${esc(m.name)}</b>${adminTag(m)}
         ${parent ? `<span class="comment-ref">回复 ${esc(parent.name)}</span>` : ''}
         <span class="comment-time">${esc(m.created_at)}</span>
-        <p>${renderText(m.content)}</p>
-        <button type="button" class="comment-reply-btn" data-wall-reply="${m.id}">↩ 回复</button>
+        ${body}
+        ${adminBtn}
+        ${replyBtn}
         ${kids}
       </div>`;
   }
@@ -603,7 +651,7 @@
       : '详细说明 <b>*</b>';
     $('#f-content').placeholder = type === 'done'
       ? '留空则自动获取 GitHub 仓库描述'
-      : '功能、场景、使用方式……写清楚大家才好帮你（贴图片链接自动显示）';
+      : '功能、场景、使用方式……写清楚大家才好帮你（🖼 按钮可插入图片）';
     if (type === 'done') fillReplySelect();
   }
 
@@ -798,6 +846,30 @@
     }
   }
 
+  /* ---------- 屏蔽 / 恢复（评论与留言板） ---------- */
+
+  async function toggleHideComment(pid, cid, hidden) {
+    try {
+      const res = await api(`/api/admin/posts/${pid}/comments/${cid}/hide`, { token: state.token, hidden });
+      if (!res.ok) throw new Error(res.error);
+      toast(hidden ? '已屏蔽 ⛔' : '已恢复显示 ↩');
+      await loadPosts();
+    } catch (err) {
+      toast('操作失败：' + err.message);
+    }
+  }
+
+  async function toggleHideWall(mid, hidden) {
+    try {
+      const res = await api(`/api/admin/wall/${mid}/hide`, { token: state.token, hidden });
+      if (!res.ok) throw new Error(res.error);
+      toast(hidden ? '已屏蔽 ⛔' : '已恢复显示 ↩');
+      await loadWall();
+    } catch (err) {
+      toast('操作失败：' + err.message);
+    }
+  }
+
   /* ---------- 公告 ---------- */
 
   function openAnnouncementModal() {
@@ -822,6 +894,39 @@
     } finally {
       btn.disabled = false;
     }
+  }
+
+  /* ---------- 插入图片（🖼 按钮 → 弹窗填链接 → 自动生成 ![说明](链接)） ---------- */
+
+  let imgInsertEl = null;
+
+  function openImageModal(targetEl) {
+    imgInsertEl = targetEl;
+    $('#i-url').value = '';
+    $('#i-alt').value = '';
+    openModal('modal-image');
+    $('#i-url').focus();
+  }
+
+  function submitImage(e) {
+    e.preventDefault();
+    let url = $('#i-url').value.trim().replace(/[\s)]/g, '');
+    if (!/^https?:\/\//i.test(url)) {
+      toast('请输入 http(s) 开头的图片链接');
+      return;
+    }
+    const alt = $('#i-alt').value.trim().replace(/[[\]()]/g, '') || '图片';
+    const el = imgInsertEl;
+    if (!el) return;
+    const md = `![${alt}](${url})`;
+    const start = el.selectionStart != null ? el.selectionStart : el.value.length;
+    const end = el.selectionEnd != null ? el.selectionEnd : el.value.length;
+    el.value = el.value.slice(0, start) + md + el.value.slice(end);
+    const pos = start + md.length;
+    el.focus();
+    if (el.setSelectionRange) el.setSelectionRange(pos, pos);
+    closeModal('modal-image');
+    toast('图片已插入 🖼');
   }
 
   /* ---------- 复制仓库名 ---------- */
@@ -931,7 +1036,7 @@
         list.innerHTML = res.logs.map((l) => `
           <div class="log-item">
             <div class="log-head">
-              <span class="log-action ${esc(l.action)}">${{ edit: '✏ 编辑', delete: '🗑 删除', sink: '⬇ 沉底', unsink: '⬆ 恢复' }[l.action] || esc(l.action)}</span>
+              <span class="log-action ${esc(l.action)}">${{ edit: '✏ 编辑', delete: '🗑 删除', sink: '⬇ 沉底', unsink: '⬆ 恢复', hide: '⛔ 屏蔽', unhide: '↩ 解除屏蔽' }[l.action] || esc(l.action)}</span>
               <b>#${l.post_id}「${esc(l.title)}」</b>
               <span class="comment-time">${esc(l.time)}</span>
             </div>
@@ -1120,8 +1225,27 @@
   on('#form-edit', 'submit', submitEdit);
   on('#form-wall', 'submit', submitWall);
   on('#wall-reply-badge', 'click', clearWallReply);
+  on('#form-image', 'submit', submitImage);
+  document.addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-img-insert], [data-img-insert-el]');
+    if (!btn) return;
+    e.preventDefault();
+    let el = btn.dataset.imgInsert ? document.getElementById(btn.dataset.imgInsert) : null;
+    if (!el && btn.dataset.imgInsertEl) {
+      const form = btn.closest('form');
+      el = form ? form.querySelector('.comment-text, #w-content') : null;
+    }
+    if (el) openImageModal(el);
+  });
 
   on('#wall-list', 'click', (e) => {
+    const hideBtn = e.target.closest('[data-hide]');
+    const unhideBtn = e.target.closest('[data-unhide]');
+    if (hideBtn || unhideBtn) {
+      const mid = Number((hideBtn || unhideBtn).dataset.cid);
+      toggleHideWall(mid, !!hideBtn);
+      return;
+    }
     const replyBtn = e.target.closest('[data-wall-reply]');
     if (!replyBtn) return;
     const cid = Number(replyBtn.dataset.wallReply);
@@ -1138,6 +1262,15 @@
     list.addEventListener('click', (e) => {
       if (e.target.closest('a, img')) return; // 链接/图片自带行为，不触发卡片
       if (e.target.closest('.reply-badge')) { clearReply(); return; }
+      const hideBtn = e.target.closest('[data-hide]');
+      const unhideBtn = e.target.closest('[data-unhide]');
+      if (hideBtn || unhideBtn) {
+        const postEl = e.target.closest('.post');
+        const pid = Number(postEl.dataset.pid);
+        const cid = Number((hideBtn || unhideBtn).dataset.cid);
+        toggleHideComment(pid, cid, !!hideBtn);
+        return;
+      }
       const doneBtn = e.target.closest('[data-submit-done]');
       const editBtn = e.target.closest('[data-edit]');
       const delBtn = e.target.closest('[data-del]');

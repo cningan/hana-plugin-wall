@@ -529,6 +529,56 @@ class Handler(BaseHTTPRequestHandler):
                 save_posts(posts)
                 self._send(200, {"ok": True, "sunk": sunk})
                 return
+            m = re.match(r"^/api/admin/posts/(\d+)/comments/(\d+)/hide$", path)
+            if m:
+                if not check_token(clean_text(data.get("token", ""), "token")):
+                    self._send(401, {"ok": False, "error": "未登录或登录已过期"})
+                    return
+                pid = int(m.group(1))
+                cid = int(m.group(2))
+                post = next((p for p in posts if p["id"] == pid), None)
+                if post is None:
+                    self._send(404, {"ok": False, "error": "帖子不存在"})
+                    return
+                comment = next((c for c in post.get("comments", []) if c.get("id") == cid), None)
+                if comment is None:
+                    self._send(404, {"ok": False, "error": "留言不存在"})
+                    return
+                hidden = bool(data.get("hidden"))
+                comment["hidden"] = hidden
+                who = comment.get("name") or "匿名"
+                content = comment.get("content", "")
+                if len(content) > 60:
+                    content = content[:60] + "……"
+                append_log("hide" if hidden else "unhide", pid, post.get("title", ""),
+                           (f"屏蔽留言（作者：{who}）内容：{content}" if hidden
+                            else f"解除屏蔽留言（作者：{who}）内容：{content}"))
+                save_posts(posts)
+                self._send(200, {"ok": True, "hidden": hidden})
+                return
+            m = re.match(r"^/api/admin/wall/(\d+)/hide$", path)
+            if m:
+                if not check_token(clean_text(data.get("token", ""), "token")):
+                    self._send(401, {"ok": False, "error": "未登录或登录已过期"})
+                    return
+                mid = int(m.group(1))
+                wall = load_json(WALL_FILE, [])
+                msg = next((m0 for m0 in wall if m0.get("id") == mid), None)
+                if msg is None:
+                    self._send(404, {"ok": False, "error": "留言不存在"})
+                    return
+                hidden = bool(data.get("hidden"))
+                msg["hidden"] = hidden
+                who = msg.get("name") or "匿名"
+                content = msg.get("content", "")
+                if len(content) > 60:
+                    content = content[:60] + "……"
+                append_log("hide" if hidden else "unhide", 0, "留言板",
+                           (f"屏蔽留言（作者：{who}）内容：{content}" if hidden
+                            else f"解除屏蔽留言（作者：{who}）内容：{content}"))
+                save_json(WALL_FILE, wall)
+                self._send(200, {"ok": True, "hidden": hidden})
+                return
             if path == "/api/admin/announcement":
                 if not check_token(clean_text(data.get("token", ""), "token")):
                     self._send(401, {"ok": False, "error": "未登录或登录已过期"})

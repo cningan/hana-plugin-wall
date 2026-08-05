@@ -97,7 +97,8 @@
     </div>
     <p class="col-hint">群里聊：插件点子、求助、找人一起做……留言可回复。</p>
     <form id="form-wall" class="wall-form">
-      <input id="w-content" type="text" maxlength="500" placeholder="说点什么…（贴图片链接自动显示）" required>
+      <input id="w-content" type="text" maxlength="500" placeholder="说点什么…（🖼 按钮可插入图片）" required>
+      <button type="button" class="img-btn" data-img-insert="w-content" title="插入图片链接，自动显示为图片">🖼</button>
       <button type="submit" class="btn-small">发布</button>
     </form>
     <div id="wall-reply-badge" class="reply-badge hidden"></div>
@@ -132,8 +133,11 @@
         <input id="f-title" type="text" maxlength="100" placeholder="一句话说清楚要什么 / 做了什么" required>
       </div>
       <div class="field">
-        <label for="f-content">详细说明 <b>*</b></label>
-        <textarea id="f-content" maxlength="2000" rows="5" placeholder="功能、场景、使用方式……写清楚大家才好帮你" required></textarea>
+        <div class="field-head">
+          <label for="f-content">详细说明 <b>*</b></label>
+          <button type="button" class="img-btn" data-img-insert="f-content" title="插入图片链接，自动显示为图片">🖼 插入图片</button>
+        </div>
+        <textarea id="f-content" maxlength="2000" rows="5" placeholder="功能、场景、使用方式……写清楚大家才好帮你（🖼 按钮可插入图片）" required></textarea>
       </div>
       <div class="field hidden" id="field-github">
         <label for="f-github">GitHub 仓库 <b>*</b></label>
@@ -205,7 +209,10 @@
         <input id="e-title" type="text" maxlength="100" required>
       </div>
       <div class="field">
-        <label for="e-content">详细说明 <b>*</b></label>
+        <div class="field-head">
+          <label for="e-content">详细说明 <b>*</b></label>
+          <button type="button" class="img-btn" data-img-insert="e-content" title="插入图片链接，自动显示为图片">🖼 插入图片</button>
+        </div>
         <textarea id="e-content" maxlength="2000" rows="5" required></textarea>
       </div>
       <div class="field hidden" id="field-e-github">
@@ -234,6 +241,28 @@
         <textarea id="ann-content" maxlength="500" rows="3" placeholder="例如：本周六晚 8 点群内需求评审会，欢迎来围观"></textarea>
       </div>
       <button type="submit" class="btn btn-primary btn-block">保存</button>
+    </form>
+  </div>
+</div>
+
+<!-- 插入图片弹窗 -->
+<div id="modal-image" class="modal-mask hidden">
+  <div class="modal modal-small">
+    <div class="modal-head">
+      <h2>🖼 插入图片</h2>
+      <button class="btn-close" data-close="modal-image">✕</button>
+    </div>
+    <form id="form-image">
+      <div class="field">
+        <label for="i-url">图片链接 <b>*</b></label>
+        <input id="i-url" type="text" maxlength="500" placeholder="https://…（图床 / 外链均可）" required>
+        <p class="field-hint">链接会插入到光标位置，发布后自动显示为图片。仅引用链接，图片仍存在原网站。</p>
+      </div>
+      <div class="field">
+        <label for="i-alt">图片说明（选填）</label>
+        <input id="i-alt" type="text" maxlength="30" placeholder="例如：插件界面截图">
+      </div>
+      <button type="submit" class="btn btn-primary btn-block">插入</button>
     </form>
   </div>
 </div>

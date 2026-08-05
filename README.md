@@ -86,6 +86,9 @@ secret.txt         # 运行时创建：管理口令（不入库）
 | POST | `/api/admin/login` | 口令换令牌 |
 | POST | `/api/admin/posts/{id}/edit` | 编辑（需令牌，记日志） |
 | POST | `/api/admin/posts/{id}/delete` | 删除（需令牌，记日志） |
+| POST | `/api/admin/posts/{id}/sink` | 沉底/恢复（需令牌，记日志） |
+| POST | `/api/admin/posts/{pid}/comments/{cid}/hide` | 屏蔽/恢复帖子评论（需令牌，记日志，原地留痕） |
+| POST | `/api/admin/wall/{mid}/hide` | 屏蔽/恢复留言板留言（需令牌，记日志，原地留痕） |
 | GET | `/api/admin/logs?token=` | 操作日志（需令牌） |
 
 ## 安全说明
