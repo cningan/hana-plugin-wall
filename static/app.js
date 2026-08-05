@@ -23,6 +23,8 @@
     pendingCount: 0,
     pendingItems: [],
     adminUsers: [],
+    expandedComments: new Set(),  // 详情弹窗已展开全部评论的帖子 id
+    expandedWall: new Set(),  // 留言板已展开全部回复的顶级留言 id
   };
 
   /* 登录凭证双写：localStorage 优先，Cookie 兜底（部分清数据场景只清 localStorage，Cookie 可恢复） */
@@ -350,7 +352,16 @@
       </div>`;
   }
 
-  function commentAreaHtml(post) {
+  function subtreeCount(id, byReplyTo) {
+    let n = 0;
+    (byReplyTo.get(id) || []).forEach((k) => { n += 1 + subtreeCount(k.id, byReplyTo); });
+    return n;
+  }
+
+  const COMMENT_FOLD_LIMIT = 3;  // 顶级评论超过该数量时折叠
+  const WALL_FOLD_LIMIT = 4;  // 留言回复子树超过该数量时折叠
+
+  function commentAreaHtml(post, expanded) {
     const comments = post.comments || [];
     const withId = comments.filter((c) => c.id != null);
     const orphans = comments.filter((c) => c.id == null);
@@ -363,10 +374,16 @@
     const cache = new Map();
     withId.forEach((c) => commentDepth(c, withId, cache));
     const tops = withId.filter((c) => !c.reply_to || !withId.some((x) => x.id === c.reply_to));
+    const showAll = expanded || tops.length <= COMMENT_FOLD_LIMIT;
+    const visible = showAll ? tops : tops.slice(0, COMMENT_FOLD_LIMIT);
+    const foldBtn = (!showAll && tops.length > COMMENT_FOLD_LIMIT)
+      ? `<button type="button" class="expand-btn" data-expand-comments="${post.id}">💬 展开全部 ${comments.length} 条评论</button>`
+      : '';
     const listHtml = (tops.length || orphans.length)
       ? '<div class="comment-list">' +
         orphans.map((c) => commentNodeHtml(c, withId, byReplyTo, 0, post.id, cache)).join('') +
-        tops.map((c) => commentNodeHtml(c, withId, byReplyTo, 0, post.id, cache)).join('') +
+        visible.map((c) => commentNodeHtml(c, withId, byReplyTo, 0, post.id, cache)).join('') +
+        foldBtn +
         '</div>'
       : '';
     return `
@@ -485,7 +502,7 @@
         ${stHtml}
         ${statusHtml}
         ${replyHtml}
-        ${commentAreaHtml(post)}
+        ${commentAreaHtml(post, state.expandedComments.has(id))}
         <div class="post-actions">
           ${actions}
           ${likeBtn(post)}
@@ -594,11 +611,12 @@
 
   /* ---------- 留言板渲染 ---------- */
 
-  /* 留言板嵌套渲染（旧数据超深照旧展示；深度 >= 4 的留言回复按钮灰化，无法继续回复） */
-  function wallItemHtml(m, withId, byReplyTo, depth, depths) {
+  /* 留言板嵌套渲染（旧数据超深照旧展示；深度 >= 4 的留言回复按钮灰化，无法继续回复）
+     expanded：顶级留言是否已展开全部回复（子节点始终传 true 保持全展开） */
+  function wallItemHtml(m, withId, byReplyTo, depth, depths, expanded) {
     if (depth > 10) return '';
     const kids = (byReplyTo.get(m.id) || [])
-      .map((k) => wallItemHtml(k, withId, byReplyTo, depth + 1, depths)).join('');
+      .map((k) => wallItemHtml(k, withId, byReplyTo, depth + 1, depths, true)).join('');
     const parent = withId.find((x) => x.id === m.reply_to);
     const adminCanSee = state.adminMode;
     const st = itemStatus(m);
@@ -626,6 +644,14 @@
           ? `<button type="button" class="comment-reply-btn dead" data-wall-reply-dead="${m.id}" title="回复链已达 4 层上限，请开新楼回复">↩ 回复</button>`
           : `<button type="button" class="comment-reply-btn" data-wall-reply="${m.id}">↩ 回复</button>`)
       : '';
+    // 顶级留言折叠：回复子树超过阈值且未展开 → 折叠为展开按钮
+    let kidsHtml = kids;
+    if (depth === 0 && !expanded) {
+      const total = subtreeCount(m.id, byReplyTo);
+      if (total > WALL_FOLD_LIMIT) {
+        kidsHtml = `<button type="button" class="expand-btn" data-expand-wall="${m.id}">💬 展开全部 ${total} 条回复</button>`;
+      }
+    }
     return `
       <div class="wall-item${m.reply_to ? ' wall-reply' : ''}${hidden ? ' comment-hidden' : ''}">
         <b>${esc(m.name)}</b>${adminTag(m)}
@@ -633,7 +659,7 @@
         <span class="comment-time">${esc(m.created_at)}</span>
         ${body}
         <div class="comment-actions">${adminBtn}${replyBtn}</div>
-        ${kids}
+        ${kidsHtml}
       </div>`;
   }
 
@@ -651,7 +677,7 @@
     const tops = withId
       .filter((m) => !m.reply_to || !withId.some((x) => x.id === m.reply_to))
       .sort((a, b) => b.id - a.id);
-    $('#wall-list').innerHTML = tops.map((m) => wallItemHtml(m, withId, byReplyTo, 0, cache)).join('');
+    $('#wall-list').innerHTML = tops.map((m) => wallItemHtml(m, withId, byReplyTo, 0, cache, state.expandedWall.has(m.id))).join('');
     $('#empty-wall').classList.toggle('hidden', state.wall.length > 0);
   }
 
@@ -1844,6 +1870,12 @@
   });
 
   on('#wall-list', 'click', (e) => {
+    const expandBtn = e.target.closest('[data-expand-wall]');
+    if (expandBtn) {
+      state.expandedWall.add(Number(expandBtn.dataset.expandWall));
+      renderWall();
+      return;
+    }
     const deadBtn = e.target.closest('[data-wall-reply-dead]');
     if (deadBtn) {
       toast('回复链已达 4 层上限，请开新楼回复 🏠');
@@ -1883,6 +1915,13 @@
     list.addEventListener('click', (e) => {
       if (e.target.closest('a, img')) return; // 链接/图片自带行为，不触发卡片
       if (e.target.closest('.reply-badge')) { clearReply(); return; }
+      const expandBtn = e.target.closest('[data-expand-comments]');
+      if (expandBtn) {
+        const pid = Number(expandBtn.dataset.expandComments);
+        state.expandedComments.add(pid);
+        renderDetail(pid);
+        return;
+      }
       const hideBtn = e.target.closest('[data-hide]');
       const unhideBtn = e.target.closest('[data-unhide]');
       if (hideBtn || unhideBtn) {

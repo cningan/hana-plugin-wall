@@ -475,8 +475,6 @@ main { max-width: 1080px; margin: 0 auto; padding: 24px; }
 .post.need { border-left: 3px solid var(--accent); }
 .post.done { border-left: 3px solid var(--green); }
 
-.modal-detail { max-width: 620px; }
-
 @keyframes rise {
   from { opacity: 0; transform: translateY(6px); }
   to { opacity: 1; transform: translateY(0); }
@@ -664,6 +662,26 @@ main { max-width: 1080px; margin: 0 auto; padding: 24px; }
 }
 
 .comment-reply-btn.dead:hover { color: #b3aca0; border-color: var(--line); background: var(--card-soft); }
+
+.expand-btn {
+  width: 100%;
+  margin-top: 8px;
+  padding: 7px 0;
+  border: 1px dashed var(--line-strong);
+  background: transparent;
+  color: var(--text-dim);
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 12.5px;
+  font-family: inherit;
+  transition: all .15s ease;
+}
+
+.expand-btn:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
 
 .comment-actions {
   display: flex;
@@ -1218,6 +1236,7 @@ footer a:hover { color: var(--accent); border-color: var(--accent); }
 .modal-small { max-width: 380px; }
 .modal-lg { max-width: 900px; }
 .modal-xl { max-width: 1180px; }
+.modal-detail { max-width: 900px; }
 
 /* 自适应多列网格：信息量增加时自动 1 列 → 2 列 → 3 列，窄屏自动回退单列 */
 .grid-auto {
