@@ -1,7 +1,14 @@
 {
-  "updated_at": "2026-08-05 20:20",
-  "last_commit": "0dc23b5326a63587d3fc9165bad4a187d61202a5",
+  "updated_at": "2026-08-05 20:31",
+  "last_commit": "0a217064f05bc119f5ba2be1181ecf06728150a1",
   "versions": [
+    {
+      "version": "v23",
+      "date": "2026-08-05 20:31",
+      "items": [
+        "feat: 昵称弹窗显示 QQ 绑定状态（me 接口与登录响应返回 qq，已绑定提示/保存成功确认）"
+      ]
+    },
     {
       "version": "v22",
       "date": "2026-08-05 20:20",
