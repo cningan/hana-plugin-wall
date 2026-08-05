@@ -1,7 +1,14 @@
 {
-  "updated_at": "2026-08-05 19:16",
-  "last_commit": "19d8d18256b81cb4b3a890ccdab24c89908221a9",
+  "updated_at": "2026-08-05 19:21",
+  "last_commit": "056d6e25809f170a1b591e0dee0e7b11a5e37f52",
   "versions": [
+    {
+      "version": "v16",
+      "date": "2026-08-05 19:21",
+      "items": [
+        "fix: 深链回复仅提醒不自动换楼；评论/留言输入框支持多行（Enter 发送、Shift+Enter 换行）"
+      ]
+    },
     {
       "version": "v15",
       "date": "2026-08-05 19:16",
