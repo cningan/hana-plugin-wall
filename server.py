@@ -112,6 +112,7 @@ DEFAULT_WHITELIST = {
     "运营官", "运营人", "审查", "巡查", "监督", "监管",
     "http", "https", "com", ".com", "test", "admin", "system", "game", "master",
     "gm", "client", "server", "cs", "kefu",
+    "其他", "手机", "info", "ice",  # 高频常用词误伤豁免（2026-08-06 用户反馈）
 }
 
 # URL 剥离：链接里的 http/.com 等垃圾词条不该触发拦截
@@ -1219,10 +1220,10 @@ class Handler(BaseHTTPRequestHandler):
                     self._send(400, {"ok": False, "error": "status 只能是 normal 或 hidden"})
                     return
                 set_status(comment, status)
-                if status == "normal":
-                    comment.pop("sensitive", None)
                 who = comment.get("name") or "匿名"
                 words = "、".join(comment.get("sensitive", [])) or "—"
+                if status == "normal":
+                    comment.pop("sensitive", None)
                 append_log("review", pid, post.get("title", ""),
                            f"审核帖子留言（作者：{who}，命中词：{words}）：{'放行' if status == 'normal' else '屏蔽'}")
                 save_posts(posts)
@@ -1269,10 +1270,10 @@ class Handler(BaseHTTPRequestHandler):
                     self._send(400, {"ok": False, "error": "status 只能是 normal 或 hidden"})
                     return
                 set_status(msg, status)
-                if status == "normal":
-                    msg.pop("sensitive", None)
                 who = msg.get("name") or "匿名"
                 words = "、".join(msg.get("sensitive", [])) or "—"
+                if status == "normal":
+                    msg.pop("sensitive", None)
                 append_log("review", 0, "留言板",
                            f"审核留言板留言（作者：{who}，命中词：{words}）：{'放行' if status == 'normal' else '屏蔽'}")
                 save_json(WALL_FILE, wall)
@@ -1293,10 +1294,10 @@ class Handler(BaseHTTPRequestHandler):
                     self._send(400, {"ok": False, "error": "status 只能是 normal 或 hidden"})
                     return
                 set_status(post, status)
-                if status == "normal":
-                    post.pop("sensitive", None)
                 who = post.get("author") or "匿名"
                 words = "、".join(post.get("sensitive", [])) or "—"
+                if status == "normal":
+                    post.pop("sensitive", None)
                 append_log("review", pid, post.get("title", ""),
                            f"审核帖子（作者：{who}，命中词：{words}）：{'放行' if status == 'normal' else '屏蔽'}")
                 save_posts(posts)
