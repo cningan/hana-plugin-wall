@@ -404,6 +404,82 @@ main { max-width: 1080px; margin: 0 auto; padding: 24px; }
 }
 .card.sunk:hover { box-shadow: var(--shadow); transform: none; }
 
+/* 多版本卡片：底部叠出旧版本纸片边缘（伪元素模拟堆叠） */
+.card.has-versions { position: relative; }
+.card.has-versions::before,
+.card.has-versions::after {
+  content: '';
+  position: absolute;
+  left: 6px;
+  right: 6px;
+  bottom: -5px;
+  height: 9px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--card);
+  box-shadow: 0 2px 6px rgba(120, 100, 70, .12);
+  z-index: -1;
+}
+.card.has-versions::after {
+  left: 12px;
+  right: 12px;
+  bottom: -9px;
+  height: 8px;
+  background: #f5f3ee;
+}
+.card.sunk.has-versions::before,
+.card.sunk.has-versions::after { opacity: .55; }
+
+.ver-tag {
+  font-size: 11px;
+  font-weight: 600;
+  color: #8d8678;
+  background: #f0ede6;
+  border: 1px solid #e2ddd2;
+  border-radius: 9px;
+  padding: 1px 7px;
+  margin-left: 6px;
+  vertical-align: 1px;
+}
+
+/* 详情弹窗版本切换条 */
+.ver-switcher {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin: 10px 0 2px;
+  padding: 8px 10px;
+  background: #f7f4ee;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.ver-label { font-size: 12px; color: #8d8678; margin-right: 2px; }
+.ver-btn {
+  font-size: 12px;
+  padding: 2px 10px;
+  border: 1px solid #ddd6c8;
+  border-radius: 12px;
+  background: #fff;
+  color: #6b6558;
+  cursor: pointer;
+}
+.ver-btn.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  font-weight: 700;
+}
+.ver-hint {
+  font-size: 12px;
+  color: #a0842f;
+  background: #fdf6dd;
+  border: 1px dashed #e3cf8a;
+  border-radius: 6px;
+  padding: 6px 10px;
+  margin-bottom: 8px;
+}
+
 .card-title {
   font-size: 14.5px;
   font-weight: 700;
@@ -1234,6 +1310,13 @@ footer a:hover { color: var(--accent); border-color: var(--accent); }
 }
 
 .modal-small { max-width: 380px; }
+.alert-msg {
+  margin: 0 0 18px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  word-break: break-all;
+  color: var(--text);
+}
 .modal-lg { max-width: 900px; }
 .modal-xl { max-width: 1180px; }
 .modal-detail { max-width: 900px; }

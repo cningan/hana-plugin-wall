@@ -488,7 +488,28 @@ def make_post(data):
         "created_at": now_str(),
         "reply_to": reply_to,
         "claim": None,
+        "owner_qq": "",  # 发帖人账号（作者本人可编辑自己的卡片；空=匿名/游客，仅管理员可编辑）
+        "versions": [],  # 历史版本快照（旧版本，按时间正序；当前内容在卡片本体）
     }, None
+
+
+MAX_VERSIONS = 10  # 版本历史上限：当前版本 + 旧快照最多共 10 份，超出丢最老的
+
+
+def snapshot_version(post):
+    """把卡片当前内容快照进 versions（旧版本），超限丢弃最老快照"""
+    versions = post.get("versions")
+    if not isinstance(versions, list):
+        versions = []
+    versions.append({
+        "title": post.get("title", ""),
+        "content": post.get("content", ""),
+        "contact": post.get("contact", ""),
+        "github": post.get("github", ""),
+        "author": post.get("author", ""),
+        "updated_at": now_str(),
+    })
+    post["versions"] = versions[-MAX_VERSIONS:]
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -984,6 +1005,14 @@ class Handler(BaseHTTPRequestHandler):
                     if not repo:
                         self._send(400, {"ok": False, "error": "请填写 GitHub 仓库名（如：用户名/仓库名）"})
                         return
+                    dup = next((p for p in posts
+                                if p["id"] != pid
+                                and p.get("type") == "done"
+                                and p.get("github", "").casefold() == repo.casefold()), None)
+                    if dup:
+                        self._send(400, {"ok": False,
+                                         "error": "该仓库已被帖子「%s」占用，请勿重复" % dup.get("title", "")})
+                        return
                     post["github"] = repo
                     if not content:
                         fetched = github_info(repo)
@@ -997,6 +1026,7 @@ class Handler(BaseHTTPRequestHandler):
                         reply_to = post.get("reply_to")
                     post["reply_to"] = reply_to
                 old = {k: post.get(k, "") for k in ("title", "content", "author", "contact", "github")}
+                snapshot_version(post)  # 编辑前把旧内容存入版本历史
                 post["title"] = title
                 post["content"] = content
                 if author:
@@ -1375,6 +1405,36 @@ class Handler(BaseHTTPRequestHandler):
                     return
                 post["author"] = visitor["name"]
                 post["fp"] = visitor.get("fp", "")
+                post["owner_qq"] = visitor.get("qq", "")
+                if post["type"] == "done" and post["github"]:
+                    dup = next((p for p in posts
+                                if p.get("type") == "done"
+                                and p.get("github", "").casefold() == post["github"].casefold()), None)
+                    if dup:
+                        my_qq = visitor.get("qq", "")
+                        if my_qq and dup.get("owner_qq") == my_qq:
+                            # 本人再次提交同一仓库 = 更新卡片（点赞评论继承，旧内容入版本历史）
+                            snapshot_version(dup)
+                            dup["title"] = post["title"]
+                            dup["content"] = post["content"]
+                            dup["contact"] = post["contact"]
+                            dup["github"] = post["github"]
+                            dup["owner_qq"] = my_qq
+                            words = find_sensitive(dup["title"] + "\n" + dup["content"])
+                            if words:
+                                dup["status"] = "pending"
+                                dup["sensitive"] = words
+                            else:
+                                dup["status"] = "normal"
+                                dup.pop("sensitive", None)
+                            append_log("edit", dup["id"], dup["title"],
+                                       f"作者更新卡片（命中词：{'、'.join(dup.get('sensitive', [])) or '无'}）")
+                            save_posts(posts)
+                            self._send(200, {"ok": True, "post": dup, "updated": True})
+                            return
+                        self._send(400, {"ok": False,
+                                         "error": "该仓库已被「%s」提交过，如需更新请联系作者或管理员" % dup.get("title", "")})
+                        return
                 post["id"] = (posts[-1]["id"] + 1) if posts else 1
                 words = find_sensitive(post["title"] + "\n" + post["content"])
                 if words:
@@ -1388,6 +1448,72 @@ class Handler(BaseHTTPRequestHandler):
                             u["flags"] = u.get("flags", 0) + 1
                             save_users(users)
                 posts.append(post)
+                save_posts(posts)
+                self._send(200, {"ok": True, "post": post})
+                return
+            m = re.match(r"^/api/posts/(\d+)/update$", path)
+            if m:
+                """作者本人更新自己的卡片（需求/成果通用）：旧内容入版本历史，点赞评论继承"""
+                visitor = get_visitor(clean_text(data.get("token", ""), "token"))
+                if not visitor:
+                    self._send(401, {"ok": False, "error": "请先登录"})
+                    return
+                pid = int(m.group(1))
+                post = next((p for p in posts if p["id"] == pid), None)
+                if post is None:
+                    self._send(404, {"ok": False, "error": "卡片不存在"})
+                    return
+                if not post.get("owner_qq") or post["owner_qq"] != visitor.get("qq", ""):
+                    self._send(403, {"ok": False, "error": "只有卡片作者本人可以更新（老卡片请联系管理员）"})
+                    return
+                title = clean_text(data.get("title", ""), "title")
+                content = clean_text(data.get("content", ""), "content")
+                contact = clean_text(data.get("contact", ""), "contact")
+                if not title:
+                    self._send(400, {"ok": False, "error": "标题不能为空"})
+                    return
+                if len(title) < 2:
+                    self._send(400, {"ok": False, "error": "标题至少 2 个字"})
+                    return
+                if post["type"] == "need" and not content:
+                    self._send(400, {"ok": False, "error": "详细说明不能为空"})
+                    return
+                if post["type"] == "done":
+                    repo = normalize_github(data.get("github", ""))
+                    if not repo:
+                        self._send(400, {"ok": False, "error": "请填写 GitHub 仓库名（如：用户名/仓库名）"})
+                        return
+                    dup = next((p for p in posts
+                                if p["id"] != pid
+                                and p.get("type") == "done"
+                                and p.get("github", "").casefold() == repo.casefold()), None)
+                    if dup:
+                        self._send(400, {"ok": False,
+                                         "error": "该仓库已被帖子「%s」占用，请勿重复" % dup.get("title", "")})
+                        return
+                    github = repo
+                    if not content:
+                        fetched = github_info(repo)
+                        if not fetched:
+                            self._send(400, {"ok": False, "error": "描述不能为空（自动获取 GitHub 描述失败，请手动填写）"})
+                            return
+                        content = fetched
+                else:
+                    github = ""
+                snapshot_version(post)
+                post["title"] = title
+                post["content"] = content
+                post["contact"] = contact
+                if post["type"] == "done":
+                    post["github"] = github
+                words = find_sensitive(post["title"] + "\n" + post["content"])
+                if words:
+                    post["status"] = "pending"
+                    post["sensitive"] = words
+                else:
+                    post["status"] = "normal"
+                    post.pop("sensitive", None)
+                append_log("edit", pid, post["title"], "作者更新卡片")
                 save_posts(posts)
                 self._send(200, {"ok": True, "post": post})
                 return

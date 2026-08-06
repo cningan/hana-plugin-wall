@@ -25,6 +25,8 @@
     adminUsers: [],
     expandedComments: new Set(),  // 详情弹窗已展开全部评论的帖子 id
     expandedWall: new Set(),  // 留言板已展开全部回复的顶级留言 id
+    detailVer: null,  // 详情弹窗当前查看的版本索引（null=最新；数字=versions 下标）
+    editOwn: false,  // 编辑弹窗是否为作者本人模式（走 /api/posts/{id}/update）
   };
 
   /* 登录凭证双写：localStorage 优先，Cookie 兜底（部分清数据场景只清 localStorage，Cookie 可恢复） */
@@ -128,6 +130,13 @@
     t.classList.remove('hidden');
     clearTimeout(toastTimer);
     toastTimer = setTimeout(() => t.classList.add('hidden'), 2500);
+  }
+
+  /* 重要提示弹窗：异常类（命中敏感词待审 / 提交失败等）用弹窗而非 toast，避免一闪而过看不到 */
+  function alertDialog(title, msg) {
+    $('#alert-title').textContent = title;
+    $('#alert-msg').textContent = msg;
+    openModal('modal-alert');
   }
 
   function openModal(id) { $(`#${id}`).classList.remove('hidden'); }
@@ -294,6 +303,41 @@
     return '';
   }
 
+  /* 版本历史：versions 为旧快照数组（正序），当前内容在卡片本体 */
+  function versionCount(post) {
+    const v = post && post.versions;
+    return Array.isArray(v) && v.length ? v.length + 1 : 1;
+  }
+  function versionTag(post) {
+    return versionCount(post) > 1
+      ? `<span class="ver-tag" title="该卡片有 ${versionCount(post)} 个版本，可在详情中切换查看">📚 ${versionCount(post)} 版</span>`
+      : '';
+  }
+  /* 详情弹窗当前展示的版本内容：verIndex 为 null/最新 显示卡片本体，否则显示 versions[verIndex] */
+  function shownVersion(post, verIndex) {
+    const versions = Array.isArray(post.versions) ? post.versions : [];
+    const isCurrent = verIndex == null || verIndex === versions.length;
+    if (isCurrent) {
+      return {
+        title: post.title,
+        content: post.content,
+        github: post.github || '',
+        contact: post.contact || '',
+        at: post.created_at || '',
+        isCurrent: true,
+      };
+    }
+    const v = versions[verIndex] || {};
+    return {
+      title: v.title || '',
+      content: v.content || '',
+      github: v.github || '',
+      contact: v.contact || '',
+      at: v.updated_at || '',
+      isCurrent: false,
+    };
+  }
+
   /* 评论嵌套深度计算（沿 reply_to 链向上数，顶层=0） */
   function commentDepth(c, withId, cache) {
     if (cache.has(c.id)) return cache.get(c.id);
@@ -422,8 +466,8 @@
 
   function needCard(post) {
     return `
-      <article class="card need${post.sunk ? ' sunk' : ''}" data-open-detail="${post.id}">
-        <h3 class="card-title">${esc(post.title)}${isMine(post) ? ' <span class="mine-tag" title="你发布 / 认领 / 留言过的">🫵 我的</span>' : ''}${statusBadge(post)}</h3>
+      <article class="card need${post.sunk ? ' sunk' : ''}${versionCount(post) > 1 ? ' has-versions' : ''}" data-open-detail="${post.id}">
+        <h3 class="card-title">${esc(post.title)}${versionTag(post)}${isMine(post) ? ' <span class="mine-tag" title="你发布 / 认领 / 留言过的">🫵 我的</span>' : ''}${statusBadge(post)}</h3>
         <p class="card-excerpt">${renderText(post.content, { noImages: true })}</p>
         ${cardMeta(post, needStatusTag(post) + sinkTag(post))}
         <div class="card-foot">
@@ -435,8 +479,8 @@
 
   function doneCard(post) {
     return `
-      <article class="card done${post.sunk ? ' sunk' : ''}" data-open-detail="${post.id}">
-        <h3 class="card-title">${esc(post.title)}${isMine(post) ? ' <span class="mine-tag" title="你发布 / 认领 / 留言过的">🫵 我的</span>' : ''}${statusBadge(post)}</h3>
+      <article class="card done${post.sunk ? ' sunk' : ''}${versionCount(post) > 1 ? ' has-versions' : ''}" data-open-detail="${post.id}">
+        <h3 class="card-title">${esc(post.title)}${versionTag(post)}${isMine(post) ? ' <span class="mine-tag" title="你发布 / 认领 / 留言过的">🫵 我的</span>' : ''}${statusBadge(post)}</h3>
         <p class="card-excerpt">${renderText(post.content, { noImages: true })}</p>
         ${cardMeta(post, sinkTag(post))}
         <div class="card-foot">
@@ -450,6 +494,7 @@
     const post = state.posts.find((p) => p.id === id);
     if (!post) return;
     state.detailId = id;
+    state.detailVer = null;  // 打开详情默认显示最新版
     const isDone = post.type === 'done';
     const replyTo = isDone ? state.posts.find((p) => p.id === post.reply_to) : null;
     const replyHtml = replyTo ? `
@@ -471,18 +516,33 @@
         claimBtn = `<button class="btn btn-primary claim-btn" data-claim="${post.id}">🙋 我要做</button>`;
       }
     }
+    const versions = Array.isArray(post.versions) ? post.versions : [];
+    const shown = shownVersion(post, state.detailVer);
+    const verSwitcher = versions.length
+      ? `<div class="ver-switcher">
+          <span class="ver-label">📚 版本</span>
+          ${versions.map((v, i) => `<button type="button" class="ver-btn${state.detailVer === i ? ' active' : ''}" data-ver="${i}" title="${esc(v.updated_at || '')}">v${i + 1}</button>`).join('')}
+          <button type="button" class="ver-btn${state.detailVer == null || state.detailVer === versions.length ? ' active' : ''}" data-ver="${versions.length}" title="最新版本">v${versions.length + 1} 最新</button>
+        </div>`
+      : '';
+    const verHint = shown.isCurrent
+      ? ''
+      : `<div class="ver-hint">📜 正在查看历史版本 v${(state.detailVer || 0) + 1}（${esc(shown.at || '')}），点赞与评论属于整个卡片。切换到最新版可查看当前内容。</div>`;
     const head = isDone ? `
       <div class="post-head">
-        <h3 class="post-title">${esc(post.title)}</h3>
-        <button type="button" class="repo-copy" data-copy-repo="${post.id}" title="复制仓库名，粘贴给智能体即可安装">📋 复制仓库名</button>
-        <a class="repo-link" href="${esc(githubUrl(post.github))}" target="_blank" rel="noopener noreferrer">GitHub ↗</a>
+        <h3 class="post-title">${esc(shown.title)}</h3>
+        ${shown.github ? `<button type="button" class="repo-copy" data-copy-repo="${post.id}" title="复制仓库名，粘贴给智能体即可安装">📋 复制仓库名</button>
+        <a class="repo-link" href="${esc(githubUrl(shown.github))}" target="_blank" rel="noopener noreferrer">GitHub ↗</a>` : ''}
       </div>` : `
       <div class="post-head">
-        <h3 class="post-title">${esc(post.title)}</h3>
+        <h3 class="post-title">${esc(shown.title)}</h3>
       </div>`;
     const sunkHtml = post.sunk ? '<div class="reply-box sink-box">⬇ 该卡片已被管理员沉底，内容仅供参考</div>' : '';
     const stHtml = state.adminMode && itemStatus(post) !== 'normal'
       ? `<div class="reply-box sink-box">${itemStatus(post) === 'pending' ? '⏳ 命中敏感词，待审核' : '⛔ 已被屏蔽'}${post.sensitive && post.sensitive.length ? '：' + post.sensitive.map((w) => `<b>${esc(w)}</b>`).join('、') : ''}</div>`
+      : '';
+    const mineEdit = shown.isCurrent && canEditPost(post)
+      ? `<button class="btn claim-btn" data-own-edit="${post.id}" title="更新你的卡片，旧内容自动存档">✏ 更新卡片</button>`
       : '';
     const actions = isDone ? '<span class="action-spacer"></span>' : `
       ${claimBtn}
@@ -491,12 +551,14 @@
     $('#detail-body').innerHTML = `
       <article class="post ${isDone ? 'done' : 'need'}${post.sunk ? ' sunk' : ''}" data-pid="${post.id}">
         ${head}
-        <p class="post-content">${renderText(post.content)}</p>
+        ${verSwitcher}
+        ${verHint}
+        <p class="post-content">${renderText(shown.content)}</p>
         <div class="post-meta">
           <span class="group">👥 ${esc(post.group)}</span>
           <span>🧑 ${esc(authorName(post))}</span>
-          ${post.contact ? `<span>📮 ${esc(post.contact)}</span>` : ''}
-          <span>🕐 ${esc(post.created_at)}</span>
+          ${shown.contact ? `<span>📮 ${esc(shown.contact)}</span>` : ''}
+          <span>🕐 ${esc(shown.at)}</span>
         </div>
         ${sunkHtml}
         ${stHtml}
@@ -505,6 +567,7 @@
         ${commentAreaHtml(post, state.expandedComments.has(id))}
         <div class="post-actions">
           ${actions}
+          ${mineEdit}
           ${likeBtn(post)}
         </div>
         ${adminBar(post)}
@@ -517,6 +580,11 @@
     if (state.me && post.author === state.me) return true;
     if (post.claim && post.claim.fp === state.fp) return true;
     return (post.comments || []).some((c) => c.fp === state.fp);
+  }
+
+  /* 作者本人能否编辑：卡片有 owner_qq 且等于当前登录账号（老匿名卡片仅管理员可编辑） */
+  function canEditPost(post) {
+    return !!post.owner_qq && state.myQQ && post.owner_qq === state.myQQ;
   }
 
   function filterAndSort(list, sortKey, statusFn) {
@@ -938,12 +1006,17 @@
       const res = await api('/api/posts', body);
       if (!res.ok) throw new Error(res.error);
       closeModal('modal-new');
-      toast(res.post && res.post.status === 'pending'
-        ? '已提交，但内容命中敏感词，需管理员审核通过后展示 ⏳'
-        : (type === 'need' ? '需求已发布 ✅' : '成果已发布 🎉'));
+      if (res.updated) {
+        alertDialog('已更新卡片 📝', '该仓库已有你的卡片，本次内容已更新为最新版本，旧内容已自动存档（详情里可切换查看）。');
+      } else if (res.post && res.post.status === 'pending') {
+        alertDialog('已提交，等待审核 ⏳',
+          '你的内容命中了敏感词，已进入待审队列。管理员审核通过后会自动展示，无需重复提交。');
+      } else {
+        toast(type === 'need' ? '需求已发布 ✅' : '成果已发布 🎉');
+      }
       await loadPosts();
     } catch (err) {
-      toast('发布失败：' + err.message);
+      alertDialog('发布失败 ❌', '发布失败：' + err.message);
     } finally {
       btn.disabled = false;
     }
@@ -974,12 +1047,14 @@
       if (!res.ok) throw new Error(res.error);
       clearReply();
       const lastC = res.post && res.post.comments ? res.post.comments[res.post.comments.length - 1] : null;
-      toast(lastC && lastC.status === 'pending'
-        ? '留言成功，内容命中敏感词，待管理员审核 ⏳'
-        : '留言成功 💬');
+      if (lastC && lastC.status === 'pending') {
+        alertDialog('留言成功，等待审核 ⏳', '你的留言命中了敏感词，已进入待审队列。管理员审核通过后会自动展示。');
+      } else {
+        toast('留言成功 💬');
+      }
       await loadPosts();
     } catch (err) {
-      toast('留言失败：' + err.message);
+      alertDialog('留言失败 ❌', '留言失败：' + err.message);
     }
   }
 
@@ -1025,12 +1100,14 @@
       $('#w-content').value = '';
       $('#w-content').style.height = '';
       clearWallReply();
-      toast(res.message && res.message.status === 'pending'
-        ? '留言成功，内容命中敏感词，待管理员审核 ⏳'
-        : '留言成功 💬');
+      if (res.message && res.message.status === 'pending') {
+        alertDialog('留言成功，等待审核 ⏳', '你的留言命中了敏感词，已进入待审队列。管理员审核通过后会自动展示。');
+      } else {
+        toast('留言成功 💬');
+      }
       await loadWall();
     } catch (err) {
-      toast('留言失败：' + err.message);
+      alertDialog('留言失败 ❌', '留言失败：' + err.message);
     } finally {
       btn.disabled = false;
     }
@@ -1419,10 +1496,12 @@
     if (!post) return;
     closeModal('modal-detail');
     state.editId = id;
+    state.editOwn = false;
     $('#e-author').value = post.author || '';
     $('#e-contact').value = post.contact || '';
     $('#e-title').value = post.title;
     $('#e-content').value = post.content;
+    $('#e-author').closest('.field').classList.remove('hidden');
     const isDone = post.type === 'done';
     $('#field-e-github').classList.toggle('hidden', !isDone);
     $('#field-e-reply').classList.toggle('hidden', !isDone);
@@ -1431,6 +1510,26 @@
       $('#e-github').value = post.github || '';
       fillEditReplySelect(post.reply_to);
     }
+    openModal('modal-edit');
+  }
+
+  /* 作者本人更新自己的卡片（昵称/回应需求不可改，走 /api/posts/{id}/update） */
+  function openOwnEdit(id) {
+    const post = state.posts.find((p) => p.id === id);
+    if (!post) return;
+    if (!requireLogin()) return;
+    closeModal('modal-detail');
+    state.editId = id;
+    state.editOwn = true;
+    $('#e-contact').value = post.contact || '';
+    $('#e-title').value = post.title;
+    $('#e-content').value = post.content;
+    $('#e-author').closest('.field').classList.add('hidden');
+    const isDone = post.type === 'done';
+    $('#field-e-github').classList.toggle('hidden', !isDone);
+    $('#field-e-reply').classList.add('hidden');
+    $('#e-github').required = isDone;
+    if (isDone) $('#e-github').value = post.github || '';
     openModal('modal-edit');
   }
 
@@ -1447,25 +1546,32 @@
     const btn = $('#form-edit button[type="submit"]');
     btn.disabled = true;
     try {
+      const isOwn = state.editOwn === true;
       const body = {
-        token: state.token,
+        token: isOwn ? state.vtoken : state.token,
         title: $('#e-title').value.trim(),
         content: $('#e-content').value.trim(),
-        author: $('#e-author').value.trim(),
         contact: $('#e-contact').value.trim(),
       };
+      if (!isOwn) body.author = $('#e-author').value.trim();
       const post = state.posts.find((p) => p.id === state.editId);
       if (post && post.type === 'done') {
         body.github = $('#e-github').value.trim();
-        body.reply_to = $('#e-reply').value || null;
+        if (!isOwn) body.reply_to = $('#e-reply').value || null;
       }
-      const res = await api(`/api/admin/posts/${state.editId}/edit`, body);
+      const res = await api(
+        isOwn ? `/api/posts/${state.editId}/update` : `/api/admin/posts/${state.editId}/edit`, body);
       if (!res.ok) throw new Error(res.error);
       closeModal('modal-edit');
-      toast('已保存 ✅');
+      state.editOwn = false;
+      if (res.post && res.post.status === 'pending') {
+        alertDialog('已更新，等待审核 ⏳', '更新后的内容命中了敏感词，已进入待审队列。管理员审核通过后会自动展示新版本，点赞和评论已保留。');
+      } else {
+        toast('已保存 ✅');
+      }
       await loadPosts();
     } catch (err) {
-      toast('保存失败：' + err.message);
+      alertDialog('保存失败 ❌', '保存失败：' + err.message);
     } finally {
       btn.disabled = false;
     }
@@ -1840,6 +1946,7 @@
   });
 
   on('#form-new', 'submit', submitNew);
+  on('#btn-alert-ok', 'click', () => closeModal('modal-alert'));
   on('#form-admin', 'submit', submitAdmin);
   on('#form-edit', 'submit', submitEdit);
   on('#form-wall', 'submit', submitWall);
@@ -1939,6 +2046,8 @@
       }
       const doneBtn = e.target.closest('[data-submit-done]');
       const editBtn = e.target.closest('[data-edit]');
+      const ownEditBtn = e.target.closest('[data-own-edit]');
+      const verBtn = e.target.closest('[data-ver]');
       const delBtn = e.target.closest('[data-del]');
       const sinkBtn = e.target.closest('[data-sink]');
       const unsinkBtn = e.target.closest('[data-unsink]');
@@ -1952,6 +2061,17 @@
       const replyBtn = e.target.closest('[data-reply-btn]');
       const copyBtn = e.target.closest('[data-copy-repo]');
       if (doneBtn) { openSubmitDone(Number(doneBtn.dataset.submitDone)); return; }
+      if (ownEditBtn) {
+        state.detailVer = null;
+        openOwnEdit(Number(ownEditBtn.dataset.ownEdit));
+        return;
+      }
+      if (verBtn) {
+        const postEl = e.target.closest('.post');
+        state.detailVer = Number(verBtn.dataset.ver);
+        renderDetail(Number(postEl.dataset.pid));
+        return;
+      }
       const claimEl = e.target.closest('[data-claim]');
       if (claimEl) { toggleClaim(Number(claimEl.dataset.claim)); return; }
       if (editBtn) { openEdit(Number(editBtn.dataset.edit)); return; }

@@ -413,6 +413,18 @@
   </div>
 </div>
 
+<!-- 重要提示弹窗（命中敏感词待审 / 提交失败等，需手动关闭，避免一闪而过） -->
+<div id="modal-alert" class="modal-mask hidden">
+  <div class="modal modal-small">
+    <div class="modal-head">
+      <h2 id="alert-title">提示</h2>
+      <button class="btn-close" data-close="modal-alert">✕</button>
+    </div>
+    <p id="alert-msg" class="alert-msg"></p>
+    <button type="button" id="btn-alert-ok" class="btn btn-primary btn-block">知道了</button>
+  </div>
+</div>
+
 <div id="toast" class="toast hidden"></div>
 
 <script src="/static/app.js"></script>
