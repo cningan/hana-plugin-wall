@@ -112,11 +112,26 @@ DEFAULT_WHITELIST = {
     "运营官", "运营人", "审查", "巡查", "监督", "监管",
     "http", "https", "com", ".com", "test", "admin", "system", "game", "master",
     "gm", "client", "server", "cs", "kefu",
-    "其他", "手机", "info", "ice",  # 高频常用词误伤豁免（2026-08-06 用户反馈）
+    "其他", "手机", "info", "ice", "url", "tel", "item",  # 高频常用词误伤豁免（2026-08-06 用户反馈）
+    "代理", "地址", "网站", "解码",  # 技术常用词误伤豁免（2026-08-06 追加）
 }
 
 # URL 剥离：链接里的 http/.com 等垃圾词条不该触发拦截
 SENSITIVE_URL_RE = re.compile(r"https?://[^\s<>\"'()\[\]，。！？、；：《》]+")
+# base64 图片数据剥离：data:image/xxx;base64,<长串字母数字> 不该触发拦截
+SENSITIVE_B64_RE = re.compile(r"data:image/[a-zA-Z0-9.+-]+;base64,[A-Za-z0-9+/=\s]+")
+
+
+def _is_ascii(s):
+    """判断词条是否纯 ASCII（英文/拼音词条）"""
+    return all(ord(c) < 128 for c in s)
+
+
+def _boundary_ok(text, start, end):
+    """纯 ASCII 词条需前后都不是字母/数字/下划线才命中，避免英文单词子串误伤（如 URL 里的 UR、danger 里的 dang）"""
+    prev = text[start - 1] if start > 0 else " "
+    nxt = text[end + 1] if end + 1 < len(text) else " "
+    return not (prev.isalnum() or prev == "_" or nxt.isalnum() or nxt == "_")
 
 
 def load_sensitive():
@@ -146,10 +161,11 @@ def load_sensitive():
 
 
 def find_sensitive(text):
-    """返回文本中命中的敏感词列表（去重，按首次出现顺序；URL 与白名单词不计）"""
+    """返回文本中命中的敏感词列表（去重，按首次出现顺序；URL/base64 与白名单词不计）"""
     if not TRIE or not text:
         return []
     text = SENSITIVE_URL_RE.sub(" ", text)
+    text = SENSITIVE_B64_RE.sub(" ", text)
     hits = []
     seen = set()
     n = len(text)
@@ -162,9 +178,12 @@ def find_sensitive(text):
             node = node[ch]
             if END in node:
                 word = text[start:j + 1]
-                if word not in seen:
-                    seen.add(word)
-                    hits.append(word)
+                if word in seen:
+                    continue
+                if _is_ascii(word) and not _boundary_ok(text, start, j):
+                    continue
+                seen.add(word)
+                hits.append(word)
     return [w for w in hits if w.casefold() not in DEFAULT_WHITELIST]
 
 
